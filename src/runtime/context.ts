@@ -126,6 +126,19 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 		projectId: string,
 	) => void | Promise<void>;
 	shouldResume?: (node: T["node"]) => boolean;
+	/**
+	 * A launch has been DECIDED for this node. Called in the same synchronous
+	 * tick as the runtime takes its launch lock — BEFORE `beforeChildLaunch`,
+	 * i.e. before the plugin's workspace exists — so it must not depend on
+	 * workspace state. Matrix flips the status to in_progress here, which is
+	 * what makes "is a launch under way" answerable during the seconds
+	 * `git worktree add` takes; running it after prep leaves that question
+	 * unanswerable for exactly as long as the answer matters.
+	 *
+	 * Called for a launch that may still FAIL (a throwing `beforeChildLaunch`),
+	 * in which case the runtime does not undo whatever this wrote — see
+	 * `ensureChildAgentRunning`.
+	 */
 	onLaunch?: (
 		node: T["node"],
 		tracker: import("../task-tracker.ts").TaskTracker,

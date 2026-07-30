@@ -4527,3 +4527,48 @@ say a past measurement usually holds while a past *"so we decided not to"* may n
 delete the false sentence and add nothing** — the true version is already in the payload headers,
 and restating it in the prompt would be the same paragraph in two places, free to drift. **Silence
 where another surface already speaks is correct; an assertion in the opposite direction is not.**
+
+## CORRECTION: the launch window is shut, and `status` answers what its WRITE POSITION lets it
+
+Fixed in `01KYNAKQDJTMVXWCQ3T62FHMZA`. Two entries above are now out of date, both about
+`close_task` landing inside the launch window: the *Known bugs and open design* entry that describes
+it as open, and *Taking a PROPERTY of a thing for the thing itself*, which reads `close_task` asking
+`status` as a category error on the ground that **status is what a launch SETS rather than what a
+launch IS**.
+
+**That sentence was true of the code it described and false of the field.** `onLaunch` — Matrix's
+one-line flip to `in_progress` — ran at the END of the launch, after the seconds-long
+`beforeChildLaunch`, so `status` genuinely could not answer "is a launch under way". Moved into the
+launch lock's own synchronous tick it reports "a launch has begun", which is exactly what close has
+to refuse. **The same field answers a different question depending on where it is written**, so that
+entry is about an ORDERING and not about a field unfit for the job. The two fixes that would have
+added a second source of truth — ask `ctx.launchingNodes`, or add `awaitLoopExit` to `closeTaskOp`
+— were both on the table and the user rejected both: 「启动的时候必须先等状态改好 不然不能启动…而
+一旦 status 被设置成 in progress 就没有人能随意动他了」.
+
+**The window is ZERO rather than smaller, on the same discipline the launch lock already rests on**:
+the `has`-check, the `add()` and the flip are one synchronous tick with no await between them, so on
+a single-threaded event loop no other tool call can interleave. `try {` does not break that, which
+is why the flip sits inside the try and so still releases the lock if a plugin hook throws.
+
+**TWO doors reach that window and only one goes through `onLaunch`.** `ensureChildAgentRunning`
+calls the hook; the REST `/continue` reactivation branch writes `in_progress` itself, so fixing the
+hook alone leaves a node closable for the whole of `git worktree add` on the other door. The rest of
+the map, because no single file shows it and the next person will re-derive it: `deliverMessage`'s
+root branch already flipped synchronously with its guard, `/continue`'s has-worktree branch flips
+before it launches, `/restart` flips before `runAgentForNode`, and `autoResume` needs no flip at all
+because it only resumes nodes that are already `in_progress`.
+
+**Announcing the launch first makes the FAILURE path load-bearing, and the two doors answer that
+differently on purpose.** A throwing `beforeChildLaunch` used to leave the old status; it now leaves
+`in_progress` — a node with no agent, which `close_task` refuses. On the `deliverMessage` door that
+is not a new state: `reportAutoLaunchFailure` marks it `failed` exactly as before, and the Phase 2
+relaunch (the second caller, which only logs) relaunches a node that was already `in_progress`. The
+REST door has no such handler, so it restores the status it found — leaving `in_progress` there
+would hand the caller a 500 plus a node they can no longer close, which is *Never offer a remedy
+that will not work* arriving as a state rather than as a message.
+
+**Holding the window open is what makes it testable, and it is cheap**: a gated `beforeChildLaunch`
+parks the launch, the test calls `closeTaskOp` from inside that window, and it asserts the DAMAGE —
+refused, and no worktree removal requested. On the pre-fix code both door tests fail with
+`Expected promise that rejects / Received promise that resolved`, which is the bug stated exactly.

@@ -669,7 +669,12 @@ export async function deliverMessage(
 			!ctx.restartingProjects.has(project.id) &&
 			!ctx.launchingNodes.has(nodeId)
 		) {
-			// Root node — same launch path as child, scope opts from ctx
+			// Root node — same launch path as child, scope opts from ctx.
+			// onLaunch runs in the same synchronous tick as the launchingNodes
+			// guard above (nothing here awaits), which is the property
+			// ensureChildAgentRunning had to be rewritten to get: the status
+			// announces the launch before anything can observe the gap. Do not
+			// move it below an await, and do not push it into runAgentForNode.
 			const rootScopeOpts = ctx.scopeOpts.get(project.id)!;
 			const rootNode = tracker.getTask(nodeId);
 			if (rootNode && rootScopeOpts.onLaunch)
@@ -794,14 +799,23 @@ async function reportAutoLaunchFailure(
 /**
  * Ensure a child task has a prepared workspace and a running agent.
  *
- * Takes the launch lock, runs the `beforeChildLaunch` and `onLaunch` scope hooks
- * (Matrix's create the worktree and set the status to in_progress — the hook
- * decides whether prep is needed, the runtime never inspects workspace state),
- * then hands the still-held lock to `runAgentForNode`.
+ * Takes the launch lock, runs the `onLaunch` and `beforeChildLaunch` scope hooks
+ * — in that order: `onLaunch` announces the launch (Matrix flips the status to
+ * in_progress) in the lock's own synchronous tick, `beforeChildLaunch` then does
+ * the slow workspace prep (Matrix's `git worktree add`; the hook decides whether
+ * prep is needed, the runtime never inspects workspace state) — then hands the
+ * still-held lock to `runAgentForNode`.
  *
  * Production callers are `deliverMessage`'s child branch and the Phase 2
  * relaunch for late messages. The REST message endpoint reaches it through
  * `deliverMessage`, not directly.
+ *
+ * CONSEQUENCE of announcing first, checked at both callers rather than assumed:
+ * a launch that fails now leaves the node ANNOUNCED. `deliverMessage` catches
+ * into `reportAutoLaunchFailure`, which marks it `failed` — the same status as
+ * before this ordering. The Phase 2 relaunch has no such handler and only logs,
+ * and needs none: it relaunches a node its own agent was just running, so the
+ * status it is left holding (`in_progress`) is the one it already had.
  */
 export async function ensureChildAgentRunning(
 	ctx: RuntimeContext,
@@ -834,12 +848,26 @@ export async function ensureChildAgentRunning(
 	// Phase A — workspace prep under the lock. If this throws, runAgentForNode never
 	// runs and so never releases the lock; release it here so the node can be retried.
 	try {
+		// onLaunch FIRST, in the same synchronous tick as the lock above — there is
+		// no await between `add()` and this line, so on a single-threaded event loop
+		// no other tool call can observe the gap. Matrix's onLaunch is the status
+		// flip to in_progress, and close_task refuses exactly that status: run it
+		// AFTER beforeChildLaunch (as this did) and the node reads pending/verify/
+		// closed for the SECONDS `git worktree add` takes, so a close lands
+		// mid-launch, removes the worktree and marks the node closed while the agent
+		// comes up on it — no throw, no crash, just a tree that disagrees with the
+		// process list. The status is then reporting "a launch has begun", which is
+		// the thing close has to refuse; it is not a second source of truth about
+		// whether an agent exists.
+		//
+		// Keeping it INSIDE the try is deliberate and costs nothing: a plugin hook
+		// that throws must still release the lock.
+		if (scopeOpts.onLaunch) scopeOpts.onLaunch(node, tracker);
 		// Prepare child workspace via scope hook (Matrix creates worktrees, plugins may differ).
 		// Hook decides if preparation is needed — runtime doesn't check workspace state.
 		if (scopeOpts.beforeChildLaunch) {
 			await scopeOpts.beforeChildLaunch(node, tracker, project.path);
 		}
-		if (scopeOpts.onLaunch) scopeOpts.onLaunch(node, tracker);
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} catch (e) {

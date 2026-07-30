@@ -447,15 +447,23 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 				return c.json(serializeNode(node));
 			}
 			ctx.launchingNodes.add(nodeId);
+			const priorStatus = node.status;
 
 			try {
+				// Announce the launch in the lock's own synchronous tick — no await
+				// between `add()` above and this line. The second door on the rule
+				// `ensureChildAgentRunning` states in full: close_task refuses only
+				// `in_progress`, so flipping AFTER the seconds-long worktree create
+				// (as this did) leaves a window where a close removes the worktree
+				// and marks the node closed while this handler launches an agent on
+				// it. Enforcing that at one of the two doors enforces it nowhere.
+				tracker.updateStatus(nodeId, "in_progress");
 				// Workspace creation is a plugin concern — route through the scope
 				// hook (Matrix creates a git worktree + assigns it on the tracker)
 				// instead of managing worktrees directly. Same hook the runtime
 				// uses when launching a fresh child — now under the launch lock.
 				const scopeOpts2 = ctx.scopeOpts.get(project.id);
 				await scopeOpts2?.beforeChildLaunch?.(node, tracker, project.path);
-				tracker.updateStatus(nodeId, "in_progress");
 				await tracker.save();
 
 				broadcastTreeUpdate(ctx, project.id, tracker);
@@ -490,8 +498,15 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 
 				return c.json(serializeNode(node));
 			} catch (e) {
-				// Prep failed before runAgentForNode took over the lock — release it.
+				// Prep failed before runAgentForNode took over the lock — release it,
+				// and put back the status this handler announced. Nothing else will:
+				// unlike the deliverMessage door there is no reportAutoLaunchFailure
+				// here, so leaving `in_progress` would invent a state the old code
+				// never produced — no agent, and close_task now refusing the node —
+				// while the caller holds a 500 and no way to act on it. Nothing was
+				// saved yet, so this only re-syncs memory with what is on disk.
 				ctx.launchingNodes.delete(nodeId);
+				tracker.updateStatus(nodeId, priorStatus);
 				const message = e instanceof Error ? e.message : String(e);
 				return c.json(
 					{ error: `Failed to re-create worktree: ${message}` },

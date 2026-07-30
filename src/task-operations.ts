@@ -535,6 +535,19 @@ export async function closeTaskOp(
 	// "wait", so the message is "wait". Naming the roads that do not work, or
 	// the destructive one nobody asked for, is completeness rather than
 	// instruction.
+	//
+	// And this is why close needs NO `stopTask` / `awaitLoopExit` callbacks
+	// where `deleteTaskOp` and `resetTaskOp` have both — asked and answered,
+	// so nobody has to re-derive it from the asymmetry. Those two operate ON a
+	// running task (stop it, then delete/reset it), so they must wait out the
+	// launch window in which a loop exists but `node.session` is not set yet.
+	// Close REFUSES a running task instead, and the status now covers that same
+	// window: a launch flips it to in_progress in the launch lock's own
+	// synchronous tick, before the seconds of workspace prep, so there is no
+	// instant where an agent is coming up and this check reads something else.
+	// Adding awaitLoopExit here would be a second answer to a question that
+	// already has one — and it would block a close behind a loop that close is
+	// not allowed to stop.
 	if (node.status === "in_progress") {
 		throw new TaskOperationError(
 			"Cannot close a running task — wait for it to finish.",
