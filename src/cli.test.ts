@@ -283,3 +283,150 @@ describe("cli: global config lives in the data dir, same as the daemon reads", (
 		expect(await new Response(proc.stdout).text()).toContain("group-in-home");
 	});
 });
+
+/**
+ * The CLI talks to the port the daemon actually listens on.
+ *
+ * `DAEMON_URL` was `process.env.MXD_DAEMON_URL ?? "http://localhost:7433"`, and
+ * the daemon listens on `globalConfig.port` — a field the Settings UI exposes
+ * with 7433 as its PLACEHOLDER, i.e. explicitly a value the user may change. So
+ * a user who changed it lost every CLI command to `Daemon is not reachable at
+ * http://localhost:7433`: true, useless, and unfalsifiable from outside.
+ *
+ * ⚠️ `MXD_DAEMON_URL` is NOT the defect and must keep winning — it is the test
+ * seam, and the way to reach a remote daemon. The defect was the hardcoded
+ * fallback UNDER it. An explicit override losing to nothing is fine; a default
+ * that overrides config is the bug.
+ *
+ * The same resolved port is what `mxd daemon install` prints. That line cannot
+ * be tested (it calls launchctl against the real launchd), so it takes the value
+ * from the same constant these tests pin rather than computing its own.
+ */
+describe("cli: the daemon URL comes from the configured port", () => {
+	let dataDir: string;
+	let fakeHome: string;
+	let server: ReturnType<typeof Bun.serve> | null = null;
+
+	beforeEach(async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-cli-port-data-"));
+		fakeHome = await mkdtemp(join(tmpdir(), "mxd-cli-port-home-"));
+	});
+
+	afterEach(async () => {
+		server?.stop();
+		server = null;
+		await rm(dataDir, { recursive: true, force: true });
+		await rm(fakeHome, { recursive: true, force: true });
+	});
+
+	/** Write a complete global config carrying `port` into the data dir. */
+	async function writeConfigWithPort(port: number) {
+		await writeFile(
+			join(dataDir, "config.json"),
+			JSON.stringify({
+				authGroups: {},
+				defaultAuth: "",
+				model: "",
+				budgetUsd: -1,
+				mcpServers: {},
+				port,
+				selfBootstrap: false,
+				thinkingEffort: 0,
+				cacheTtl: { root: "1h", child: "5m" },
+			}),
+		);
+	}
+
+	/** A daemon on an ephemeral port that records the paths it is asked for. */
+	function startFakeDaemon(): { port: number; paths: string[] } {
+		const paths: string[] = [];
+		const s = Bun.serve({
+			port: 0,
+			fetch(req) {
+				paths.push(new URL(req.url).pathname);
+				return Response.json([]);
+			},
+		});
+		server = s;
+		if (s.port == null) throw new Error("fake daemon got no port");
+		return { port: s.port, paths };
+	}
+
+	function runCli(args: string[], env: Record<string, string | undefined>) {
+		const { MXD_DAEMON_URL: _drop, ...rest } = process.env;
+		return Bun.spawn(["bun", CLI_PATH, ...args], {
+			env: { ...rest, MXD_DATA_DIR: dataDir, HOME: fakeHome, ...env },
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+	}
+
+	test("with no MXD_DAEMON_URL, the CLI reaches the port in config", async () => {
+		const { port, paths } = startFakeDaemon();
+		await writeConfigWithPort(port);
+
+		const proc = runCli(["list"], {});
+		const stderr = await new Response(proc.stderr).text();
+		expect(await proc.exited, `stderr: ${stderr}`).toBe(0);
+
+		// The whole claim: a request arrived at the configured port. Nothing is
+		// listening on 7433 in this test's world, so a CLI still hardcoding it
+		// cannot produce this.
+		expect(paths).toContain("/projects");
+	});
+
+	test("MXD_DAEMON_URL still wins over the configured port", async () => {
+		const { port, paths } = startFakeDaemon();
+		// Config points somewhere dead; the override points at the live server.
+		await writeConfigWithPort(1);
+
+		const proc = runCli(["list"], {
+			MXD_DAEMON_URL: `http://localhost:${port}`,
+		});
+		const stderr = await new Response(proc.stderr).text();
+		expect(await proc.exited, `stderr: ${stderr}`).toBe(0);
+		expect(paths).toContain("/projects");
+	});
+
+	test("the unreachable message names the configured port, not 7433", async () => {
+		// The reported symptom was a URL the user could not act on. Port 1 is
+		// privileged and unbound, so the connection fails for a real reason.
+		await writeConfigWithPort(1);
+
+		const proc = runCli(["list"], {});
+		expect(await proc.exited).toBe(1);
+		const stderr = await new Response(proc.stderr).text();
+		expect(stderr).toContain("http://localhost:1");
+		expect(stderr).not.toContain("7433");
+	});
+
+	test("no hardcoded daemon port, and no PORT env read, survives in cli.ts", async () => {
+		// A source assertion because the two sites that held these are different
+		// KINDS of line — a module constant and a console.log — and only one of
+		// them is reachable from a test at all. `process.env.PORT` was read by
+		// `daemon daemon install`'s printed URL and by nothing else in the repo:
+		// the daemon has never read it, so the line reported a port that no
+		// configuration could produce.
+		//
+		// Collect the OFFENDING LINES rather than asserting on the file text: a
+		// failing `expect(wholeFile).not.toContain(…)` prints all 1600 lines of
+		// cli.ts into the log, which is how one assertion elsewhere in this repo
+		// produced a 227MB run.
+		const src = await readFile(
+			new URL("./cli.ts", import.meta.url).pathname,
+			"utf-8",
+		);
+		// Comment-opening lines are skipped for the same reason the data-dir
+		// audit in `data-paths.test.ts` skips them: the fix's own comments quote
+		// the deleted expression, so a source audit written in the same commit as
+		// its fix will always match the explanation of that fix. Third time
+		// tonight — it is the rule here, not the exception.
+		const offenders = src
+			.split("\n")
+			.map((line, i) => ({ line, n: i + 1 }))
+			.filter(({ line }) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
+			.filter(({ line }) => /7433|process\.env\.PORT\b/.test(line))
+			.map(({ line, n }) => `${n}: ${line.trim()}`);
+		expect(offenders).toEqual([]);
+	});
+});

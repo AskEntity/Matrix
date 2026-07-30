@@ -12,6 +12,7 @@ import { runAnalyzeCache } from "./cli-analyze-cache.ts";
 import {
 	type AuthGroup,
 	configFieldRefusal,
+	DEFAULT_CONFIG,
 	GLOBAL_ONLY_FIELDS,
 	type LocalConfig,
 	loadGlobalConfig,
@@ -29,13 +30,54 @@ const _pkg = JSON.parse(
 ) as { version: string };
 const VERSION = _pkg.version;
 
-const DAEMON_URL = process.env.MXD_DAEMON_URL ?? "http://localhost:7433";
 // In lockstep with the daemon BY CONSTRUCTION now, rather than by two copies of
 // one expression: if the daemon runs with a custom MXD_DATA_DIR, the CLI must
 // sign with the same jwtSecret — otherwise the token is verified against the
 // wrong secret and rejected.
 const DATA_DIR = resolveDataDir();
 const AUTH_JSON_PATH = join(DATA_DIR, "auth.json");
+
+/**
+ * The port the daemon listens on: `globalConfig.port`, the same field
+ * `daemon.ts`'s production entry passes to `Bun.serve`.
+ *
+ * A config that exists and cannot be read is a real condition, so it is
+ * REPORTED rather than guessed past — every command that reads config is about
+ * to fail with the same message anyway, and silently substituting a port here
+ * is the exact defect this file is being fixed for. We still fall back, because
+ * the remedy the message names (`mxd config init`) is itself a CLI command and
+ * must stay runnable: a throw at module load would take away the only tool that
+ * can repair the state. A missing file is NOT this case — `loadGlobalConfig`
+ * returns defaults for ENOENT, which is what a fresh install is.
+ */
+async function configuredPort(): Promise<number> {
+	try {
+		return (await loadGlobalConfig()).port;
+	} catch (e) {
+		const message = e instanceof Error ? e.message : String(e);
+		console.warn(
+			`Warning: could not read global config (${message})\n` +
+				`  Assuming the daemon is on port ${DEFAULT_CONFIG.port}.`,
+		);
+		return DEFAULT_CONFIG.port;
+	}
+}
+
+/** `http://localhost:<configured port>` — what `mxd daemon install` just started. */
+const LOCAL_DAEMON_URL = `http://localhost:${await configuredPort()}`;
+
+/**
+ * Where to reach the daemon.
+ *
+ * `MXD_DAEMON_URL` is an explicit override and wins: it is how tests point the
+ * CLI at an ephemeral port, and how a user reaches a daemon that is not on this
+ * machine. What was wrong was the fallback UNDER it — a hardcoded 7433 standing
+ * in for `globalConfig.port`, so a user who changed the port in Settings lost
+ * every CLI command to `Daemon is not reachable at http://localhost:7433`. An
+ * explicit override losing to nothing is fine; a DEFAULT that overrides config
+ * is the bug.
+ */
+const DAEMON_URL = process.env.MXD_DAEMON_URL ?? LOCAL_DAEMON_URL;
 
 /**
  * Plugin namespace prefix for matrix-worker routes.
@@ -1367,7 +1409,13 @@ async function handleDaemon(args: string[]): Promise<void> {
 			console.log("Daemon installed and started.");
 			console.log(`  Plist: ${PLIST_PATH}`);
 			console.log(`  Logs:  ${LOG_DIR}/daemon.log`);
-			console.log(`  URL:   http://localhost:${process.env.PORT ?? "7433"}`);
+			// LOCAL_DAEMON_URL, not DAEMON_URL: this line describes the daemon
+			// `install` just launched, which is on this machine whatever
+			// MXD_DAEMON_URL points at. It used to read `process.env.PORT`, an
+			// env var NOTHING in this repo has ever set or read — so the line
+			// reported a port no configuration could produce, and a user with
+			// `port: 12345` was told to go to 7433.
+			console.log(`  URL:   ${LOCAL_DAEMON_URL}`);
 			break;
 		}
 
