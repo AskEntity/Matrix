@@ -446,6 +446,38 @@ explanation expires* (six instances inside one 24-hour window, six media, no cro
 **Neither was findable by reading for redundancy, because no two instances share any wording.** They
 were findable by asking what the sections were instances OF.
 
+### The enumeration is the only CONTENT check, and every other check passing is what hides that
+
+**Measured 2026-07-30, on this document's own procedure.** A merge phase landed five commits with
+empty bodies and reported six checks green: region list, code fences, orphan headings, bold pairing,
+column widths, task-id count. **All six are STRUCTURAL. The per-section disposition list is the only
+one that asks whether a fact survived** — so "all checks passed" was fully consistent with **nine
+accidental content losses**, which is this file's own *a passing gate looks identical whether it read
+8% or 100%* wearing the reorganization procedure as its medium.
+
+⭐ **The mechanical form that makes the enumeration cheap, since "list every subsection's
+disposition" reads like bookkeeping until you have a way to do it:** for each original section pull
+out every `**bold run**` over ~25 characters and every backticked identifier, and check both against
+the new file. **The bold runs are useless alone — about 85% report "not verbatim", because merging
+rewords.** The IDENTIFIERS are the signal: an identifier present before and absent after is either a
+deliberate drop or an accident, **and separating those two is exactly what the enumeration is for.**
+Ratio on this run: **9 accidents to 1 deliberate drop.** Without the list they are indistinguishable
+in the diff, and the deliberate one looks just as alarming as the accidents.
+
+⚠️ **A multi-edit repair script that aborts part-way leaves NO trace in the diff, and the natural
+follow-up makes it permanent.** A restore script here held two edits, threw on the second one's
+assertion, and — writing the file only at the end — landed NEITHER. The follow-up fixed the edit that
+had thrown and silently dropped the one that had not, so a paragraph reported as restored was still
+missing two hours later. **Re-run every edit in an aborted script, not the one that failed, and
+verify a restore by grepping for the restored token rather than by the script exiting 0.**
+
+⭐ **Line-wrap false positives are the majority of what a token probe reports, and they are not
+noise to suppress.** Of eleven candidates, three were phrases that exist in the file split across two
+lines — this file's own *anything over ~60 characters needs a multiline search*, firing on the
+verification script written to check it. Expect roughly a third, chase all of them anyway: the check
+that separates a wrap from a loss is one `grep` on a short fragment, and the one time you skip it is
+the one that was real.
+
 ## What a run produces
 
 Two things, and the second is the more valuable:
