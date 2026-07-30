@@ -241,6 +241,27 @@ Violating any of these produces silent corruption rather than an error. Each bul
 rule; most are also argued out in their own region, a few are stated only here — **a missing region
 is not a missing mechanism**, so do not read one as the other.
 
+**They are not eight unrelated rules. They are two families, and knowing which family you are in
+tells you what a violation is going to look like.**
+
+**Family one is ONE WRITER, ONE PATH.** `deliverMessage` is the only writer of message events; the
+provider loop is the only writer after a yield tool_call; `task-operations.ts` is the only
+implementation of a task operation; the live path delegates to the walker instead of constructing
+anything of its own. **Breaking one of these corrupts nothing on the day you do it** — it creates a
+SECOND implementation, which then drifts, and the bill arrives months later when the two disagree
+about something nobody thought to compare.
+
+**Family two is DURABLE BEFORE VISIBLE — and where a crash can land between two writes, order them
+so that the state you are left holding is the one you can repair.** Persist before broadcast, so no
+observer is ever shown an event it cannot name. Make `task_complete` durable before `done_notified`,
+because a duplicate completion is recoverable and a lost one hangs the parent forever. Write the
+index DB before the sidecar that claims it, because "the sidecar is behind" is repairable while "the
+sidecar says indexed" is a permanent silent hole. Write a temp sibling and rename, because a crash
+mid-write has to leave the OLD `tree.json` whole rather than a truncated one. Repair a session by
+appending, because `setChainHead` is pure memory and the jump only reaches disk as the next event's
+`parentEid`. **One question generates every one of them: there is an instant when only the first
+write has landed — which of the two possible worlds can you come back from?**
+
 - **JSONL content fidelity.** What is written to JSONL is byte-identical to what was sent to the
   API. No truncation on persisted content — UI truncation happens at the rendering layer only.
 - **Tool results are three-part.** Every tool_result must (1) emit to JSONL, (2) yield to SSE, and
@@ -910,7 +931,8 @@ behaviours hide it equally well. Code-level half of `01KXNZHYSJFF0BVQJVPG2WC1RV`
 
 **An interrupt takes a running agent from mid-turn to idle-waiting-for-input and tears down
 nothing.** A stop is teardown: kill background processes, close the queue, drop the session,
-disconnect MCP. They were the same button in the UI before this, and they are opposite verbs.
+disconnect MCP. They were the same button in the UI before this, and they are opposite verbs — the
+button wore a pause icon, said "Interrupt", and called `stopTask` (`01KYBB2ZWQQDTSXE3V110PGT0Y`).
 
 The signal is `TaskSession.interrupt`, deliberately **not** `session.abortController`. Sharing one
 channel gives you either "an interrupt tore the session down" or "a teardown was mistaken for an
@@ -967,7 +989,12 @@ inversion against pending messages: pending IS a projection of a persistent log,
 events is right there (*Pending messages are a projection of the event log*). **The question to ask
 is "does this thing exist on disk?"**
 
-`AgentActivity = "idle" | "thinking" | "tool"`, asymmetric on purpose. `tool` is the precise one
+`AgentActivity = "idle" | "thinking" | "tool"` (`01KYBBEBYP4EFMSHFAMS43PMDF`), and the split the
+user drew is **"is the MODEL running", not "is something happening"**: `idle` no, `thinking` yes,
+`tool` **no — the API has already returned and we are executing what it asked for.** `thinking` and
+`tool` are both alive, and they are **two different kinds of alive**; that distinction is the
+semantic foundation the interrupt work is built on rather than a display detail, because only one of
+them has an in-flight request to cancel. It is asymmetric on purpose: `tool` is the precise one
 because it is the only state with an unclosed tool_call, which is the one with an interrupt
 consequence. `idle` means parked on `queue.wait()`. **`thinking` is explicitly the residual** —
 every other way the loop is alive — which makes retry backoff, session setup and compaction turns
@@ -1387,7 +1414,12 @@ recovers on restart, a fork never does.**
 ## The live path has no construction logic of its own
 
 **Two independent constructions of "how a user turn is built" disagreed about whether an image
-carried its caption, and that is the bug this design deletes.** `buildUserTurn` delegates to the
+carried its caption, and that is the bug this design deletes** (`01KNDS3AQ76SEZCK27SNQW5HAD`).
+**Name the cost, because "the two paths disagreed" understates it: a divergence between the live
+turn and the reconstructed one is a PREFIX MISMATCH, so the next restart pays a full cache miss on
+the whole conversation.** The live path added the `[N image(s) attached by user]` caption and the
+idle branch of reconstruction did not, which is a difference of one line of text and a bill measured
+in tens of thousands of tokens. `buildUserTurn` delegates to the
 walker's callbacks, and the initial drain goes through `adapter.appendQueueMessagesToMessages` for
 the same reason, so there is exactly one implementation per provider. **The live path therefore
 cannot drift from JSONL reconstruction, structurally rather than by discipline.** If you are tempted
@@ -1550,7 +1582,11 @@ was added.
 mechanism**: the Edit/Rewind gate, message deep-links, viewport addressing, and "is this event still
 part of the conversation". They are one thing — **the frontend needs the persisted event identity on
 the path it actually receives events over** — and it was missing because `emitEvent` used to
-broadcast before persisting, so SSE clients were shown events they could not refer to.
+broadcast before persisting, so SSE clients were shown events they could not refer to
+(`01KYBQXSVEP7Y94NWHGWSMNQSM`; the eid/parentEid chain itself is `01KY2TAX4CQAF2V0YF4SCZH6FK`).
+**Four consumers each about to build their own locator is the signal worth recognising, not the
+feature: when several unrelated features independently reach for the same missing primitive, the
+primitive is the work and the four features are its callers.**
 
 **`LogEntry.id` is derived from the eid** via a map that is never cleared — clearing it IS the
 failure it prevents. The log is replaced wholesale on every refetch, and a module counter made every
@@ -2844,7 +2880,10 @@ the true baseline main had zero failures.
 ## Pending messages are a projection of the event log
 
 **Four successive fixes tried to patch a mutable `deferredMessages` map by changing *when* mutations
-happen — and each closed one race and left the model in place. The mutable state was the bug.**
+happen — and each closed one race and left the model in place. The mutable state was the bug**
+(`01KY2TRYPWP408Y3FGX029YBK6`). **Four fixes that each close one race is the diagnosis, not the
+history: if every fix is about WHEN a mutation happens, the thing to remove is the mutation, not to
+find the correct moment for it.**
 
 `pendingReducer(state, action)` is a pure module-level function: a `message` event with an id and a
 non-compact source appends, a `messages_consumed` removes by id set, **every other event is a
@@ -2885,6 +2924,19 @@ SSE resume and a REST refetch, and the two deliver with opposite semantics — S
 REST snapshot clobbers — so without extend you get either data loss (live "ABCDEF" overwritten by a
 stale "ABCDE") or duplication ("ABCDEFDEF"). **Final (non-partial) events still use `replace_*` —
 they are authoritative rather than snapshots.**
+
+**Now name what those two deliveries ARE, because `extend_*` is a CONSEQUENCE and not the point: the
+frontend still runs an incremental path and a wholesale-rebuild path at the same time, so it has the
+duplicate-codepath disease the backend was cured of.** The incremental half was built deliberately
+and at length — epoch-prefixed SSE ids, a ring buffer, `Last-Event-ID` catch-up, an entire task —
+*specifically so that a gap could be filled without rebuilding*; and after it shipped every
+reconnect went on rebuilding anyway. What has grown on the seam between them is defensive
+apparatus: `extend_*` is one guard, the pending driver's suppression of an already-consumed message
+id is a second, and the remount that loses the reader's scroll position is the bill for the rebuild
+itself. **That is *Where agents predictably go wrong* #1 in the frontend — two paths, drifting,
+each new symptom answered with another guard — and the standing proposal is to delete one of them:
+the log should be a fold over an append-only stream. Draft `01KYCPCFXF1QXVB3ESE40BAW58`, filed off
+the user's own reading — "it has no reason to refresh, it should just be append".**
 
 **Thinking specifically must extend rather than replace even though replace looks equivalent**: a
 partial thinking event has an empty `signature`, and Anthropic needs that signature for prefix
