@@ -15,20 +15,21 @@
  * 500MB model load for it.)
  */
 import { cpSync, mkdtempSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatRelatedTasks } from "../.mxd/plugin/scope-opts.ts";
 import {
 	projectIndexDbPath,
 	projectTasksDir,
 	projectTreeJsonPath,
+	resolveDataDir,
 } from "../src/data-paths.ts";
 import { formatTieredHits } from "../src/orchestrator-tools.ts";
 import { createExecutionProbe } from "../src/search-hit-format.ts";
 import { searchIndex } from "../src/task-index.ts";
 import { TaskTracker } from "../src/task-tracker.ts";
 
-const liveDataDir = join(homedir(), ".mxd");
+const liveDataDir = resolveDataDir();
 const projectId = process.env.MXD_PROJECT_ID ?? "01KN0H3365HN9W560R7WC3XQ10";
 const dataRoot = "@/plugin/matrix";
 const query = process.argv[2] ?? "scroll position follow mode activity log";

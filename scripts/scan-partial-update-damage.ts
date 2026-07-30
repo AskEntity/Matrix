@@ -16,8 +16,8 @@
  */
 
 import { readdir, readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveDataDir } from "../src/data-paths.ts";
 
 const REJECTED = new Set(["closed", "failed"]);
 // Fields applied AFTER the status check in updateTaskOp — silently dropped.
@@ -31,7 +31,7 @@ let withRejectedStatus = 0;
 const damage: string[] = [];
 const dropped: string[] = [];
 
-const projRoot = join(homedir(), ".mxd", "projects");
+const projRoot = join(resolveDataDir(), "projects");
 for (const proj of await readdir(projRoot)) {
 	const tasksDir = join(projRoot, proj, "plugin", "matrix", "tasks");
 	let files: string[];

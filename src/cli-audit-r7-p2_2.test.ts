@@ -32,11 +32,15 @@ describe("P2.2: `mxd watch` mints stream token before opening /events", () => {
 		//
 		// macOS gotcha: `mkdtemp("/var/folders/…")` returns an unresolved
 		// symlink path, but `process.cwd()` inside the spawned CLI returns
-		// the resolved `/private/var/folders/…` form. Our CLI's
-		// resolveCurrentProject() does a string compare of cwd against
-		// each project's registered path — so we must register the
-		// project with the REALPATH, else the match fails and the CLI
-		// exits 1 before ever hitting the stream-token flow.
+		// the resolved `/private/var/folders/…` form.
+		//
+		// ⚠️ CORRECTED: this used to say resolveCurrentProject() string-compares
+		// cwd against each registered path, so the fixture HAD to register the
+		// realpath. It compares by realpath now — the production half of this
+		// gotcha was fixed, and the symlink case has its own tests in
+		// `cli.test.ts`. The realpath here is now only fixture hygiene: it keeps
+		// this test about stream tokens, so a regression in path resolution
+		// cannot surface as a confusing failure in the auth flow.
 		dataDir = realpathSync(await mkdtemp(join(tmpdir(), "mxd-p22-data-")));
 		fakeHome = realpathSync(await mkdtemp(join(tmpdir(), "mxd-p22-home-")));
 		// Pre-initialize auth.json so the CLI's `getCLIToken()` returns

@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import {
@@ -49,9 +47,11 @@ import { GIT_HASH, VERSION } from "./version.ts";
 
 const startTime = Date.now();
 
-const defaultConfig: RuntimeConfig = {
-	dataDir: join(homedir(), ".mxd"),
-};
+// `createApp` used to default to `{ dataDir: join(homedir(), ".mxd") }`.
+// MEASURED: zero callers ever reached it — not scope-worker, not one test — so
+// it was a dataDir nobody chose, sitting where the one derivation belongs. Same
+// deletion as DEFAULT_MODEL, one field over: the parameter is required now, and
+// the compiler confirms every caller already passed one.
 
 /**
  * Detect interrupted Phase 2 of two-phase done() from JSONL events.
@@ -117,7 +117,7 @@ export function findInterruptedDonePhase2(events: Event[]):
 	return { type: "status_stale", status };
 }
 
-export function createApp(config: RuntimeConfig = defaultConfig) {
+export function createApp(config: RuntimeConfig) {
 	const app = new Hono();
 
 	// Build the shared context object

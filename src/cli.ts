@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
 	encryptWithPublicKey,
@@ -13,6 +12,7 @@ import { runAnalyzeCache } from "./cli-analyze-cache.ts";
 import {
 	type AuthGroup,
 	configFieldRefusal,
+	DEFAULT_CONFIG,
 	GLOBAL_ONLY_FIELDS,
 	type LocalConfig,
 	loadGlobalConfig,
@@ -22,19 +22,63 @@ import {
 	saveGlobalConfig,
 	saveProjectRepoConfig,
 } from "./config.ts";
+import { resolveDataDir } from "./data-paths.ts";
 import { pluginApiPrefix } from "./plugin-url.ts";
+import { isSameOrInside, realpathOr } from "./real-path.ts";
 
 const _pkg = JSON.parse(
 	await Bun.file(new URL("../package.json", import.meta.url).pathname).text(),
 ) as { version: string };
 const VERSION = _pkg.version;
 
-const DAEMON_URL = process.env.MXD_DAEMON_URL ?? "http://localhost:7433";
-// Must stay in lockstep with daemon.ts's production entry block. If the daemon
-// runs with a custom MXD_DATA_DIR, the CLI must sign with the same jwtSecret —
-// otherwise the token is verified against the wrong secret and rejected.
-const DATA_DIR = process.env.MXD_DATA_DIR ?? join(homedir(), ".mxd");
+// In lockstep with the daemon BY CONSTRUCTION now, rather than by two copies of
+// one expression: if the daemon runs with a custom MXD_DATA_DIR, the CLI must
+// sign with the same jwtSecret — otherwise the token is verified against the
+// wrong secret and rejected.
+const DATA_DIR = resolveDataDir();
 const AUTH_JSON_PATH = join(DATA_DIR, "auth.json");
+
+/**
+ * The port the daemon listens on: `globalConfig.port`, the same field
+ * `daemon.ts`'s production entry passes to `Bun.serve`.
+ *
+ * A config that exists and cannot be read is a real condition, so it is
+ * REPORTED rather than guessed past — every command that reads config is about
+ * to fail with the same message anyway, and silently substituting a port here
+ * is the exact defect this file is being fixed for. We still fall back, because
+ * the remedy the message names (`mxd config init`) is itself a CLI command and
+ * must stay runnable: a throw at module load would take away the only tool that
+ * can repair the state. A missing file is NOT this case — `loadGlobalConfig`
+ * returns defaults for ENOENT, which is what a fresh install is.
+ */
+async function configuredPort(): Promise<number> {
+	try {
+		return (await loadGlobalConfig()).port;
+	} catch (e) {
+		const message = e instanceof Error ? e.message : String(e);
+		console.warn(
+			`Warning: could not read global config (${message})\n` +
+				`  Assuming the daemon is on port ${DEFAULT_CONFIG.port}.`,
+		);
+		return DEFAULT_CONFIG.port;
+	}
+}
+
+/** `http://localhost:<configured port>` — what `mxd daemon install` just started. */
+const LOCAL_DAEMON_URL = `http://localhost:${await configuredPort()}`;
+
+/**
+ * Where to reach the daemon.
+ *
+ * `MXD_DAEMON_URL` is an explicit override and wins: it is how tests point the
+ * CLI at an ephemeral port, and how a user reaches a daemon that is not on this
+ * machine. What was wrong was the fallback UNDER it — a hardcoded 7433 standing
+ * in for `globalConfig.port`, so a user who changed the port in Settings lost
+ * every CLI command to `Daemon is not reachable at http://localhost:7433`. An
+ * explicit override losing to nothing is fine; a DEFAULT that overrides config
+ * is the bug.
+ */
+const DAEMON_URL = process.env.MXD_DAEMON_URL ?? LOCAL_DAEMON_URL;
 
 /**
  * Plugin namespace prefix for matrix-worker routes.
@@ -576,10 +620,13 @@ async function resolveProject(idOrPath?: string): Promise<string | null> {
 		const res = await api(`/projects/${idOrPath}`);
 		if (res.ok) return idOrPath;
 
-		// Try as path
+		// Try as path. Compared by which DIRECTORY it names, not by spelling:
+		// `mxd tasks /tmp/foo` must find the project registered as
+		// `/private/tmp/foo`, and vice versa.
 		const listRes = await api("/projects");
 		const projects = (await listRes.json()) as { id: string; path: string }[];
-		const match = projects.find((p) => p.path === idOrPath);
+		const wanted = realpathOr(idOrPath);
+		const match = projects.find((p) => realpathOr(p.path) === wanted);
 		if (match) return match.id;
 
 		console.error(`Project not found: ${idOrPath}`);
@@ -594,10 +641,11 @@ async function resolveCurrentProject(): Promise<string | null> {
 	const res = await api("/projects");
 	const projects = (await res.json()) as { id: string; path: string }[];
 
-	// Find project whose path matches or is a parent of cwd
-	const match = projects.find(
-		(p) => cwd === p.path || cwd.startsWith(`${p.path}/`),
-	);
+	// Find the project whose directory holds cwd. `process.cwd()` is always the
+	// PHYSICAL path while a registered path is whatever was typed, so a string
+	// compare answered "No project found for current directory" from inside the
+	// project's own directory — on macOS for every project under /tmp.
+	const match = projects.find((p) => isSameOrInside(cwd, p.path));
 
 	if (!match) {
 		console.error(
@@ -1073,9 +1121,12 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 		let authJsonPath: string | undefined;
 		let baseUrl: string | undefined;
 		const isProject = args.includes("--project");
+		/** Which credential flags were actually typed, for the checks below. */
+		const seen = new Set<string>();
 
 		for (let i = 2; i < args.length; i++) {
 			const arg = args[i];
+			if (arg?.startsWith("--")) seen.add(arg);
 			if (arg === "--provider" && i + 1 < args.length) {
 				const p = args[++i] as string;
 				if (p !== "anthropic" && p !== "openai") {
@@ -1094,6 +1145,45 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 			} else if (arg === "--base-url" && i + 1 < args.length) {
 				baseUrl = args[++i] as string;
 			}
+		}
+
+		// A flag that was accepted and then ignored is the failure this whole
+		// command keeps producing: `--base-url` was dropped for anthropic groups
+		// (fixed), `--key` with `--auth-json` was one flag ignored out of two
+		// (fixed, by refusing), and these are the last two forms of it. The rule,
+		// stated once: a flag the chosen provider has no field for is REFUSED.
+		//
+		// Refused rather than warned-about, because the group is written to disk
+		// either way and a warning above a success line reads as advice. The user
+		// is standing right here; a re-run costs them one line.
+		const FLAGS_BY_PROVIDER = {
+			anthropic: ["--key", "--oauth-token"],
+			openai: ["--key", "--auth-json"],
+		} as const;
+		// Every flag this command understands. A SUBTRACT-list: a flag added to
+		// the parser above and forgotten here lands on the refused side, where
+		// somebody notices, rather than being silently swallowed.
+		const COMMON_FLAGS = ["--provider", "--base-url", "--project"];
+		const credentialFlags: readonly string[] = FLAGS_BY_PROVIDER[provider];
+		const other = provider === "anthropic" ? "openai" : "anthropic";
+
+		for (const flag of seen) {
+			if (credentialFlags.includes(flag) || COMMON_FLAGS.includes(flag)) {
+				continue;
+			}
+			// Name where the flag DOES belong when we know, because "unknown
+			// flag" leaves the reader guessing at a typo they cannot see.
+			const belongsElsewhere = (
+				FLAGS_BY_PROVIDER[other] as readonly string[]
+			).includes(flag);
+			console.error(
+				belongsElsewhere
+					? `${flag} belongs to --provider ${other}, and this group is --provider ${provider}. ` +
+							`${provider} auth takes ${credentialFlags.join(" or ")}.`
+					: `Unknown flag: ${flag}. ` +
+							`Known: ${[...credentialFlags, ...COMMON_FLAGS].join(", ")}.`,
+			);
+			process.exit(1);
 		}
 
 		let group: AuthGroup;
@@ -1218,8 +1308,14 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 		console.log(`Removed auth group "${name}" from global config.`);
 	} else {
 		console.error("Usage:");
+		// Per provider, because the credential flags are NOT interchangeable: an
+		// `--auth-json` on an anthropic group is refused now, and a usage line
+		// listing all three as one set would send the user straight into it.
 		console.error(
-			"  mxd config auth add <name> --provider <anthropic|openai> [--key <key> | --oauth-token <token> | --auth-json <path>] [--base-url <url>]",
+			"  mxd config auth add <name> --provider anthropic --key <key> | --oauth-token <token> [--base-url <url>]",
+		);
+		console.error(
+			"  mxd config auth add <name> --provider openai    --key <key> | --auth-json <path>   [--base-url <url>]",
 		);
 		console.error("  mxd config auth list");
 		console.error("  mxd config auth remove <name> [--global|--project]");
@@ -1275,10 +1371,20 @@ async function handleHealth(): Promise<void> {
 // ── Daemon management via launchctl ──
 
 const PLIST_LABEL = "dev.matrix.daemon";
+// HOME is correct HERE and only here: macOS genuinely puts LaunchAgents under
+// the home directory. It is not our data dir and must not move with it.
 const PLIST_DIR = `${process.env.HOME}/Library/LaunchAgents`;
 const PLIST_PATH = `${PLIST_DIR}/${PLIST_LABEL}.plist`;
 const MXD_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const LOG_DIR = `${process.env.HOME}/.mxd/logs`;
+// The daemon's logs are runtime state, so they live in the data dir. Was
+// `${HOME}/.mxd/logs`, which ignored MXD_DATA_DIR — one of the five answers.
+//
+// ⚠️ USER-VISIBLE: anyone running with MXD_DATA_DIR set will find the daemon's
+// logs somewhere new. Deliberate — a log directory that ignores MXD_DATA_DIR is
+// the same defect as a config path that ignores it. The risk that would have
+// made it the wrong call (an installed daemon logging where the CLI does not
+// look) does not exist: the plist bakes in the absolute path resolved here.
+const LOG_DIR = join(DATA_DIR, "logs");
 
 function daemonPlist(): string {
 	const bunPath = process.argv[0]; // bun binary that's running this CLI
@@ -1362,7 +1468,13 @@ async function handleDaemon(args: string[]): Promise<void> {
 			console.log("Daemon installed and started.");
 			console.log(`  Plist: ${PLIST_PATH}`);
 			console.log(`  Logs:  ${LOG_DIR}/daemon.log`);
-			console.log(`  URL:   http://localhost:${process.env.PORT ?? "7433"}`);
+			// LOCAL_DAEMON_URL, not DAEMON_URL: this line describes the daemon
+			// `install` just launched, which is on this machine whatever
+			// MXD_DAEMON_URL points at. It used to read `process.env.PORT`, an
+			// env var NOTHING in this repo has ever set or read — so the line
+			// reported a port no configuration could produce, and a user with
+			// `port: 12345` was told to go to 7433.
+			console.log(`  URL:   ${LOCAL_DAEMON_URL}`);
 			break;
 		}
 
