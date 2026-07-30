@@ -2318,8 +2318,8 @@ finally returns something."* The scale of the gap, counted over root's whole 110
 `read_file` **775**, `bash` **4320**, and `search_tasks` **42**. Pick the denominator deliberately,
 because the three available ones differ by 6×: **23** file-searches per tree-search, **41** if
 read_file counts as consulting the tree, **144** against everything that touches the working tree.
-**Counting it needs `{"type":"tool_call","tool":"…"}` — the field is `tool`, not `name`.** A first pass grepping `"name":"mcp__mxd__search_tasks"` returned **10** — a plausible
-small number that would have "confirmed" the thesis while actually matching that string inside
+**Counting it needs `{"type":"tool_call","tool":"…"}` — the field is `tool`, not `name`.** A first
+pass grepping `"name":"mcp__mxd__search_tasks"` returned **10** — a plausible small number that would have "confirmed" the thesis while actually matching that string inside
 tool_result CONTENT, since results quote the text of other calls. **The wrong instrument answered in
 the believable direction, on the very claim it was asked about.**
 
