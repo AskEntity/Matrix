@@ -4043,12 +4043,13 @@ value, a control built on that value cannot REACH one of them.**
 
 **CORRECTION to the first account of this, which said the panel "already had the right convention one
 screen away" and quoted `SettingBoolField`'s comment about three states.** That comment described a
-control that was never built: `indeterminate` is set NOWHERE in the file, and the onChange always
-wrote a boolean — so the third state could be DISPLAYED and never returned to. One click and the
-field was explicitly set forever. What the panel actually had one screen away was the right
-*vocabulary*, the right *display*, and **the same one-way door**. Both fields share one
-`InheritToggle` now, because a three-state value cannot live on a two-state checkbox — the inherit
-state needs its own control. **A comment naming three states is not evidence of three states**; see
+control that was never built: `indeterminate` is set NOWHERE in the file, and the onChange was `{
+[field]: e.target.checked }`, which always writes a boolean — so the third state could be DISPLAYED
+and never returned to. One click and the field was explicitly set forever. What the panel actually
+had one screen away was the right *vocabulary*, the right *display*, and **the same one-way door**.
+Both fields share one `InheritToggle` now, because a three-state value cannot live on a two-state
+checkbox — the inherit state needs its own control. **A comment naming three states is not evidence
+of three states**; see
 *A stored explanation expires* for the class and for the cheap check that was skipped twice in one
 evening — grep for the mechanism, not for the sentence claiming it.
 
@@ -4280,8 +4281,8 @@ we are not (we send `originator: "matrix"` and implement none of the feature mat
 and `0.0.0`, which also returns all 7, is the worse of the two lies, because `999.0.0` returning
 everything follows from `>= minimal_client_version`, the visible mechanism, while `0.0.0` returning
 everything works for a reason we cannot see. **Prefer the sentinel whose behaviour follows from the
-mechanism you can read.** Filtering is pure loss here regardless — we never SELECT from this list, the
-user already picked a model — so a narrower catalogue can only fail a lookup for a model we are
+mechanism you can read.** Filtering is pure loss here regardless — we never SELECT from this list,
+the user already picked a model — so a narrower catalogue can only fail a lookup for a model we are
 about to send traffic to.
 
 **Sent unconditionally with no endpoint branch, and that is measured rather than assumed:**
@@ -4527,6 +4528,14 @@ required now, which made the compiler enumerate the rest — 24 errors, all in t
 production, because both providers already funnel `model: request.model ?? this.model` before
 entering the loop.
 
+**A correct COUNT next to a truncated LIST reads as a complete enumeration, and that is the sharpest
+form of the no-piping rule this file has.** Following that compiler cascade, `tsc | tail -30` was
+paired with a `grep -c` over the same output reporting 24 errors, and **the number is what does the
+damage**: it felt like verification, a plan was built from the visible tail, and **7 more sites
+appeared that had been in the head all along.** Without the count the truncation is obvious; with it
+you believe you have enumerated. Redirect to a file and take the sites from the whole file, never
+from a tail.
+
 Two things nobody should re-derive. **The env fallbacks had ZERO test coverage**: restoring
 `?? process.env.OPENAI_API_KEY` reddens exactly one test, the inverted guard written with the
 deletion, while 24 others in that file stay green. That guard is not the re-aiming trap this file
@@ -4534,7 +4543,8 @@ warns about elsewhere, and the difference is that **its producer still exists** 
 hold `OPENAI_API_KEY`, the test SETS it, and the assertion is that the value did not land. And the
 `""`-overlay worry points the other way from how it was first raised: `resolveConfig` overlays on
 `value !== undefined`, so `""` IS an overriding value, but the global layer is the BASE at all three
-production call sites, so an empty global model can never climb over a project's. The reverse is
+production call sites (`daemon.ts`, `runtime/helpers.ts`, `cli.ts`), so an empty global model can
+never climb over a project's. The reverse is
 reachable and pinned by a test.
 
 **Nothing in production guards an empty or absent model, and no test can see one.** After the
@@ -4565,6 +4575,26 @@ the OAuth token the user had configured.
 `x-api-key` and `authorization`, so anyone whose shell held `ANTHROPIC_API_KEY` for some other
 project **could not use the OAuth path at all**, and the auth error blamed their OAuth token. That is
 the path we bootstrap on every day. Read "a credential env var is set" as a break, not a preference.
+
+**Four things about testing this door, each of which cost a false green.** `git log -S` tells you
+which names were ever yours: 15 commits touched `ANTHROPIC_API_KEY`, and **`ANTHROPIC_AUTH_TOKEN` has
+ZERO** — it was never ours, it is the SDK's, so a sentinel claiming we ignore it would assert the
+opposite of measured reality. **An env sentinel must DELETE its sibling credential variables, not
+merely set the one under test**, measured false-green otherwise: with both `??`s restored — the
+shape a real revert has — the `CLAUDE_CODE_OAUTH_TOKEN` test PASSES on a machine whose shell holds
+`ANTHROPIC_API_KEY`, because `useOAuth = Boolean(oauthToken && !apiKey)` and the ambient key
+suppresses the branch being watched. **A fixture's redness must not depend on whose shell it ran
+in**, and matrix developers plausibly hold that variable, so that is the normal case rather than the
+exotic one. **A negative assertion about a header (`not.toContain("oauth-2025-04-20")`) passes just
+as happily on a header you failed to READ**, so it needs a positive control beside it asserting a
+beta feature that is always sent — verified by making the accessor path wrong and watching the
+control fire. And **`check_model`'s only test accepted `ok` OR `error`**, so on a machine whose shell
+held `ANTHROPIC_API_KEY` it made a REAL call to `api.anthropic.com` during `bun test` and passed
+either way; an either-way assertion cannot tell a hermetic run from a networked one, and the sentinel
+that replaced it asserts **zero requests left the process**, which can. One thing that does NOT
+transfer between the providers: the Anthropic no-credential branch neither warns nor throws, it
+builds a credential-less client, so the OpenAI sentinel's `console.warn` hook has nothing to hang on
+and the signal has to be which credential the client ended up holding.
 
 `undefined` and "I did not pass it" are the same thing to an SDK that tests `=== undefined`, and
 **`null` is the only other spelling** — its own signature is `string | null | undefined`, and
@@ -4621,8 +4651,8 @@ credential field in config produces no credential — and its docstring says pla
 catch the `||`.
 
 **Behaviour change, intended: with nothing configured the client holds nothing**, so the SDK throws
-*"Could not resolve authentication method…"* before building a request, instead of quietly running on
-the shell's key. Same trade as deleting `DEFAULT_MODEL`: an unconfigured value became visible
+*"Could not resolve authentication method…"* before building a request, instead of quietly running
+on the shell's key. Same trade as deleting `DEFAULT_MODEL`: an unconfigured value became visible
 instead of substituted.
 
 ### The host, and who gets billed
@@ -4636,7 +4666,10 @@ typed field (`cdad315a`). **A comment that documents a behaviour without endorsi
 an accident survives review** — it reads as *considered*, and nothing distinguishes it from
 *decided*. `resolveAnthropicBaseUrl` in `src/config.ts` is now the one answer, called by all three
 sites, and it is behaviourally identical to what the SDK would have done (`baseURL ||
-'https://api.anthropic.com'`), which is the point: it changes who decides, not what happens.
+'https://api.anthropic.com'`), which is the point: it changes who decides, not what happens. One SDK
+side effect, checked rather than assumed: an explicit `baseURL` sets the client's internal
+`_baseURLIsExplicit`, which only governs whether a `profile` credential may supply a host — and we
+never pass `profile`.
 
 The OpenAI door is the same rule and a different currency. `openai`'s constructor takes **all five**
 slots as default parameters, so there is not even an `=== undefined` test to sidestep — a slot you
@@ -4703,7 +4736,11 @@ bare 429 costs 397ms of the SDK's own backoff.
 stays ours.** `ChatGPT-Account-Id` is a header and `defaultHeaders` is fixed when the client is built,
 so `streamResponsesAPI` still resolves the source once for it — and that resolve pays twice, because
 it is also where an unreadable credential fails with OUR message instead of inside the SDK's
-`Failed to get token from 'apiKey' function: …` wrapper.
+`Failed to get token from 'apiKey' function: …` wrapper (which does preserve the full text, with the
+original in `cause`). MEASURED with a real token as the positive control: a setter returning `""`
+throws and **zero requests leave the process**, where the static `""` it replaced sent `Bearer ` and
+collected a misleading 401. **Deliberately NOT pinned by a test** — `openAICredentialSource` cannot
+produce an empty token, so such a test would only assert the SDK's behaviour rather than ours.
 
 Three measured facts around it. `ChatGPT-Account-Id` is **not required** for codex `/models` (200
 with and without, byte-identical; 401 with no `Authorization` as the positive control) and is still
@@ -4714,7 +4751,8 @@ reversing the order moved the 403 onto the with-header call before both settled 
 first-hit edge block and a real header requirement are indistinguishable in the payload; only the
 permutation separates them.** A path is **never masked** — `authJsonPath` is not a credential, the
 secret never enters config, and which file you pointed at is the one thing that settings row exists
-to tell you — so the test pins the ABSENCE of masking. And `readCodexAuth` expands a leading `~/`,
+to tell you — so `maskAuthGroup` and the CLI both leave it verbatim, and the test pins the ABSENCE
+of masking. And `readCodexAuth` expands a leading `~/`,
 because the documented location is `~/.codex/auth.json` and neither place a user types it goes
 through a shell.
 
