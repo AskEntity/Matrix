@@ -345,9 +345,13 @@ classification was true and carried no force.
 > produces a true sentence with no force, and it is more persuasive than a wrong name precisely
 > because it survives every challenge aimed at the name.
 
-The remedy differs by member, which is why they must not be collapsed: *several PARTS of one design*
-and *several ENTRANCES to one rule* feel identical on site, and *Editing the system prompt* works
-that distinction through with its own tell.
+The remedy differs by member, which is why they must not be collapsed. *Several PARTS of one design*
+and *several ENTRANCES to one rule* feel identical on site and pull opposite ways: **entrances ask
+you to COMPLETE** — deploy the same rule at the door you missed, mechanical, because the decision
+was already made — while **parts ask you to DECIDE**, since an unbuilt part was proposed and never
+agreed. **The tell is cheap: for an entrance you can name the rule and point at where it already
+runs. If you cannot, you are holding a proposal.** *Editing the system prompt* works that through on
+the case it cost.
 
 ## Start from everything and subtract; never enumerate what to include
 
@@ -744,9 +748,22 @@ Completion is `done()` and nothing else — `end_turn` with no tool call is an i
 an implicit done. `handleImplicitYield` is the ONE place every path that stops working ends up,
 which is what keeps "what is this agent waiting for" from becoming five states.
 
-**On resume the loop reads its state off the JSONL SHAPE — four of them — never off an in-memory
-flag.** That is the durability property the whole design rests on, and it is why every proposal that
-would add a fifth state is weighed so carefully.
+**On resume the loop reads its state off the JSONL SHAPE — never off an in-memory flag — and there
+are exactly four shapes.** The enumeration is here because the rule attached to it is a CONSTRAINT
+on the set, and a constraint on a set the reader cannot see is unusable:
+
+| shape | what the tail of the active chain looks like | what the loop does with the queue |
+|---|---|---|
+| **yield resume** | last tool_call is `yield` with no result, **or** the last provider content is `assistant_text` (an implicit yield) | skip the drain entirely; the yield handler consumes |
+| **done resume** | last tool_call is `done` with no result | skip the drain entirely; the wake path writes the done tool_result |
+| **interrupted resume** | none of the above, and the reconstructed messages END on a `user` role — the shape repair leaves behind | NON-blocking drain: take what is already queued, do not wait |
+| **fresh start** | anything else, including a session with no events at all | blocking wait for the first message |
+
+**That is why every proposal to add a FIFTH is weighed so carefully**, and why the `interrupt`
+marker is not one: it is an ordinary queue message the loop happens to write about itself, so it
+lands inside the shapes above rather than beside them. **The rule to check any proposal against is
+that each shape must be decidable from the JSONL alone** — the moment a fifth needs a flag that only
+exists in memory, a crash makes the loop unable to tell which state it is in.
 
 `hasPendingImplicitYield` must stop at `messages_consumed`. It used to walk straight over
 consumptions, land on the `assistant_text` from BEFORE the message, and report a park — so the loop
@@ -1821,8 +1838,11 @@ does not return a context length at all.
 `src/llm.ts` wraps the provider adapters for plugins needing one-shot calls outside the agent loop.
 **SDK client construction is DUPLICATED across three sites** — the provider class constructor,
 `createAnthropicClient` in `llm.ts`, and the `check_model` handler in `runtime.ts` — with beta
-headers, timeout and `baseURL` hand-matched and nothing enforcing agreement. That duplication is now
-load-bearing for a correctness property rather than cosmetics; see *Nothing ambient may decide*.
+headers, timeout and `baseURL` hand-matched and nothing enforcing agreement. **That duplication is
+now load-bearing for a correctness property rather than cosmetics: each of the three must build its
+client from ONE object literal naming EVERY credential slot, because any slot left unmentioned is
+exactly what sends the SDK to read the environment.** Three hand-matched copies of that literal are
+three places a fourth branch could reopen it — see *Nothing ambient may decide*.
 
 ---
 # Nothing Ambient May Decide What We Send
@@ -2169,9 +2189,15 @@ function's FIRST argument.
 **arriving with `git clone`**, so a repo you cloned could otherwise choose the model and the auth
 group every later agent run uses. **That is why `GLOBAL_ONLY_FIELDS` is the wrong home for the rule:
 the field is not global-only, it is not-from-the-repo** — and it is why the three tabs are not
-variations of one form. `rejectCredentialFields` is layer-aware for the same reason. The deeper hole
-a write-door guard never covered is `01KYQYRXST632196G3FNWTWF1X`, and it is hardening rather than a
-vulnerability: **there is no sandbox, so a hostile repo already owns you once an agent reads it.**
+variations of one form. **The enforcement is the layer projection itself: a field outside a layer's
+set is dropped at the read, so no separate credential rejector is needed or exists.** `authGroups`
+is the exception that proves it — being global-only it is validated rather than projected, so a
+removed field inside a group would simply never be read again, and `warnRemovedAuthFields` exists to
+say so out loud. **It warns and never repairs**, because this loader is also what `mxd config` reads
+before saving, so a fix applied here would rewrite the user's credentials as a side effect of an
+unrelated command. The deeper hole a write-door guard never covered is `01KYQYRXST632196G3FNWTWF1X`,
+and it is hardening rather than a vulnerability: **there is no sandbox, so a hostile repo already
+owns you once an agent reads it.**
 
 **`SettingNumberField` KEEPS the implicit "empty box = inherit" convention**, considered rather than
 missed. It is a third convention in one panel, which is the one real argument for converting it.
@@ -2244,14 +2270,15 @@ because silently substituting a port is the defect itself. Falling back, because
 message names (`mxd config init`) is a CLI command — a throw at module load takes away the only tool
 that can repair the state.
 
-**NEGATIVE RESULTS from the same sweep.** `createApp`'s `defaultConfig` was **dead** — zero callers
-ever omitted the argument — while `resolveTaskJsonlPath`'s identical-looking default was the
-**opposite**: its one caller never passed anything, so the default WAS the value, and `mxd
-analyze-cache` read whatever it said. **Two defaults written the same way, one unreachable and one
-load-bearing; only counting callers tells them apart, and the reflex fix is wrong for one of them. A
-default's value is decided entirely by who OMITS the argument, which is the one thing its definition
-cannot show you.** Also `ProjectManager`'s `getByPath` and `ensureProject` have zero production
-callers, which is most of the answer to `01KYSBAA41QRBA7GY3ZQ9M9RBR`.
+**NEGATIVE RESULTS from the same sweep.** `createApp`'s optional config default was **dead** — zero
+callers ever omitted the argument, and it has since been deleted, so `createApp(config)` is now
+required — while `resolveTaskJsonlPath`'s identical-looking default was the **opposite**: its one
+caller never passed anything, so the default WAS the value, and `mxd analyze-cache` read whatever it
+said. **Two defaults written the same way, one unreachable and one load-bearing; only counting
+callers tells them apart, and the reflex fix is wrong for one of them. A default's value is decided
+entirely by who OMITS the argument, which is the one thing its definition cannot show you.** Also
+`ProjectManager`'s `getByPath` and `ensureProject` have zero production callers, which is most of
+the answer to `01KYSBAA41QRBA7GY3ZQ9M9RBR`.
 
 **An installed service records a decision; it must not look one up at login.** `mxd daemon install`
 BAKES the resolved data dir into the plist as an absolute path rather than forwarding the variable:
