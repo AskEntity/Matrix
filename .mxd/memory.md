@@ -4382,15 +4382,25 @@ plus *three things I could not do myself*, `FOUR THINGS FOR ROOT TO DECIDE OR KN
 root`, and *left for root to decide whether it becomes a task*. *When agents repeatedly do X, ask
 whether the motivation is legitimate*: it is, so this wants a destination rather than a prohibition.
 
-**The failure is not that nobody reads it. It is that the reader has a LIFETIME.** Measured on the
-2026-07-30 cold read: of the 8 findings its report placed out of scope, **5 were fixed within 90
-minutes**, and the 3 still in prose when attention moved have been nobody's since. The window is
-narrower than *the reader was awake* — reading the commits' `Task-Id` trailers, all five fixes were
-committed by the CHILD that had just merged the report, not by root, so what executed them was a
-second agent that happened to still be alive. One round of `01KYQKY5S2826C4SNMWM0MVN6T` did both
-things at once: one finding it FILED as a node, one it left as *"for root to decide whether it
-becomes a task"*. Both got done, because somebody was still attending.
-`01KYJ4E7JERXZFJCQDB5SB9GQ6`'s did not, and a human cleaned it up by hand two days later.
+**The failure is not that nobody reads it. It is that the reader has a LIFETIME.** The 2026-07-30
+cold read placed 8 findings out of scope; re-checked against the file two hours later, **6 were
+already fixed**, and one of the two survivors was a pair of forward references the reader had
+judged fine — so the residue was ONE item. That reads like a success and it is a coincidence:
+reading the commits' `Task-Id` trailers, every fix was committed by the CHILD that had just merged
+the report, inside the 90 minutes before it closed. What executed those requests was a second agent
+that happened to still be alive. **And the outcome cannot tell you which findings were ACTIONED** —
+three are named in one commit's subject line, while the `Drained` taxonomy row came back inside an
+unrelated pass restoring 13 dropped rules.
+
+**The previous run is the other end of that range: the same step with the executor gone.** The
+2026-07-25 cold read's report was never actioned. Five days later a full regeneration re-derived
+its placement, region-balance and cross-reference findings as a side effect of reorganising — and
+every finding that needed its own separate act, define a term, add a map, delete a label, died.
+**A process that lands only the findings a later pass would have regenerated anyway is getting
+nothing from the cold read**, which is the half nothing else can produce. One round of
+`01KYQKY5S2826C4SNMWM0MVN6T` shows both behaviours at once: one finding it FILED as a node, one it
+left as *"for root to decide whether it becomes a task"*. Both got done, because somebody was
+attending. `01KYJ4E7JERXZFJCQDB5SB9GQ6`'s did not, and a human cleaned it up by hand two days later.
 
 > **`close_task` is the deadline.** A request still in prose when its task closes is not pending —
 > it is gone, and the round it lives in will not be read again.
