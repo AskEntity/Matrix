@@ -23,10 +23,11 @@
  * hand; not asserted here, because a test may not depend on one machine's data.
  */
 
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { projectTasksDir } from "./data-paths.ts";
 import {
 	DEFAULT_EXCLUDED_KINDS,
 	eventKind,
@@ -34,8 +35,13 @@ import {
 	formatLogSearchResult,
 	LOG_SEARCH_LIMITS,
 	type LogSearchOptions,
+	MAX_SINGLE_HIT_CHARS,
 	searchTaskLog,
 } from "./log-search.ts";
+import { createOrchestratorTools } from "./orchestrator-tools.ts";
+import { resetResourceRegistry } from "./resource-registry.ts";
+import { TaskTracker } from "./task-tracker.ts";
+import { initMockResourceRegistry } from "./test-utils.ts";
 
 // ── Fixture ──
 
@@ -429,6 +435,44 @@ describe("output is bounded by BYTES, never by event count", () => {
 		);
 	});
 
+	test("a matching event is never announced and then withheld", async () => {
+		// ⚠️ THE OVER-STRICT DIRECTION, and the only mutation that survived the
+		// first pass: dropping the `shown > 0` escape reddened nothing, because
+		// with production's numbers one hit can never fill the budget. The
+		// failure it allows is a header saying "N matching events" above zero
+		// hits — which reads as a broken search, not as a cap doing its job.
+		// Reachable only at a small budget, hence the injected one.
+		const file = writeLog([ev.assistantText(`needle ${"z".repeat(5000)}`)]);
+		const r = await search(file, { query: "needle", context: 0 });
+		const out = formatLogSearchResult(r, "T", "needle", Date.now(), 10);
+		expect(out).toContain("needle");
+		expect(out).toContain("#1");
+	});
+
+	test("the injected budget is actually honoured", async () => {
+		// The positive control for the test above. A mutation replacing `budget`
+		// with the constant SURVIVED without this — harmless in production,
+		// since every real call takes the default, but it silently turns the
+		// over-strict test into one that proves nothing. A test whose subject
+		// can be disconnected without anything going red is decoration.
+		const events = Array.from({ length: 30 }, (_, i) =>
+			ev.assistantText(`needle ${i} ${"z".repeat(300)}`),
+		);
+		const r = await search(writeLog(events), { query: "needle", context: 0 });
+		const wide = formatLogSearchResult(r, "T", "needle", Date.now());
+		const narrow = formatLogSearchResult(r, "T", "needle", Date.now(), 2000);
+		expect(narrow.length).toBeLessThan(wide.length);
+		expect(narrow).toContain("2,000-char output budget");
+	});
+
+	test("one hit can never fill the whole budget", () => {
+		// What makes the escape above safe. It is a relationship between two
+		// constants declared far apart — raise `maxContext` and the escape
+		// silently starts emitting oversized results — so it is asserted rather
+		// than left as a coincidence someone has to notice.
+		expect(MAX_SINGLE_HIT_CHARS).toBeLessThan(LOG_SEARCH_LIMITS.totalChars);
+	});
+
 	test("limit and context are clamped, not trusted", async () => {
 		const events = Array.from({ length: 300 }, () =>
 			ev.assistantText("needle"),
@@ -492,6 +536,26 @@ describe("context", () => {
 		const r = await search(file, { query: "needle", context: 2 });
 		expect(r.hits[0]?.after).toEqual([]);
 		expect(r.hits[0]?.before).toEqual([]);
+	});
+
+	test("one event never appears on both sides of the same hit", async () => {
+		// Checked first against the real 114MB session — 438 hits over 5 queries,
+		// zero violations — after a rendered result LOOKED like it had the same
+		// `message:task_complete` before and after one hit. It was two distinct
+		// events with identical truncated text, which repair produces: messages
+		// in a dropped region are replayed with fresh eids. Verified rather than
+		// assumed, then pinned here so the invariant is not left to eyeballing.
+		const file = writeLog([
+			ev.assistantText("one"),
+			ev.assistantText("needle"),
+			ev.assistantText("three"),
+		]);
+		const r = await search(file, { query: "needle", context: 3 });
+		const before = new Set(r.hits[0]?.before.map((c) => c.eid));
+		for (const a of r.hits[0]?.after ?? [])
+			expect(before.has(a.eid)).toBe(false);
+		expect(r.hits[0]?.before.map((c) => c.text)).toEqual(["one"]);
+		expect(r.hits[0]?.after.map((c) => c.text)).toEqual(["three"]);
 	});
 
 	test("context text is the longest field, not the first", async () => {
@@ -640,5 +704,171 @@ describe("rendering", () => {
 		]);
 		const out = await render(file, { query: "needle" });
 		expect(out).toContain("searched 1 of 3 events");
+	});
+});
+
+// ── The canonical journey: the tool, on a CLOSED task ──
+
+describe("the search_logs tool", () => {
+	let dir: string | null = null;
+	afterEach(() => {
+		resetResourceRegistry();
+		if (dir) rmSync(dir, { recursive: true, force: true });
+		dir = null;
+	});
+
+	/**
+	 * A closed task with its worktree and branch gone, exactly as `close_task`
+	 * leaves it, and its conversation still on disk under the data root.
+	 *
+	 * ⚠️ This is THE case the feature exists for and the one a fixture is most
+	 * likely to fake: a running task can still just be asked, so a closed one is
+	 * where the only remaining copy of the conversation is this file. Reading
+	 * through a worktree would work in every test and fail for every real closed
+	 * task.
+	 */
+	async function closedTaskWithLog(events: unknown[]) {
+		dir = mkdtempSync(join(tmpdir(), "log-search-tool-"));
+		const projectId = "proj1";
+		const tracker = new TaskTracker(join(dir, "tree.json"));
+		await tracker.load();
+		const task = tracker.addChild(tracker.rootNodeId, "Old work", "d");
+		tracker.updateStatus(task.id, "closed");
+		// close_task nulls both — anything reading them cannot find the log.
+		expect(tracker.getTask(task.id)?.branch ?? null).toBeNull();
+		expect(tracker.getTask(task.id)?.worktreePath ?? null).toBeNull();
+
+		mkdirSync(projectTasksDir(dir, projectId), { recursive: true });
+		writeFileSync(
+			join(projectTasksDir(dir, projectId), `${task.id}.jsonl`),
+			`${events.map((e) => JSON.stringify(e)).join("\n")}\n`,
+		);
+
+		const { auth } = initMockResourceRegistry({
+			tracker,
+			projectId,
+			projectPath: dir,
+			taskId: task.id,
+			dataDir: dir,
+		});
+		const { toolDefs } = createOrchestratorTools(auth, projectId, task.id);
+		const tool = toolDefs.find((t) => t.name === "search_logs");
+		if (!tool) throw new Error("search_logs not registered");
+		return { tool, taskId: task.id, projectId };
+	}
+
+	const call = async (
+		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+		tool: any,
+		args: Record<string, unknown>,
+	): Promise<string> => {
+		const res = await tool.handler(args, {});
+		return (res.content[0] as { text: string }).text;
+	};
+
+	test("finds a closed task's conversation from the data root", async () => {
+		const { tool, taskId } = await closedTaskWithLog([
+			ev.message("user", {
+				content: "我记得之前说过 schema-constrained sampling",
+			}),
+			ev.assistantText("对，我去确认一下"),
+		]);
+		const out = await call(tool, { taskId, query: "我记得" });
+		expect(out).toContain("schema-constrained");
+		expect(out).toContain("1 matching event");
+	});
+
+	test("no event store for the project is not an error", async () => {
+		// A closed task has no session, so `getEventStore` throws. The file on
+		// disk is still the whole answer — the flush is an optimisation for a
+		// RUNNING task, never a precondition.
+		const { tool, taskId } = await closedTaskWithLog([
+			ev.assistantText("needle"),
+		]);
+		const out = await call(tool, { taskId, query: "needle" });
+		expect(out).toContain("1 matching event");
+	});
+
+	test("an unknown task is refused, not answered with zero matches", async () => {
+		const { tool } = await closedTaskWithLog([ev.assistantText("x")]);
+		const res = await tool.handler(
+			{ taskId: "01ZZZZZZZZZZZZZZZZZZZZZZZZ", query: "x" },
+			{},
+		);
+		expect(res.isError).toBe(true);
+		expect((res.content[0] as { text: string }).text).toContain(
+			"Task not found",
+		);
+	});
+
+	test("an invalid regex explains itself instead of failing blankly", async () => {
+		const { tool, taskId } = await closedTaskWithLog([ev.assistantText("x")]);
+		const res = await tool.handler({ taskId, query: "(unclosed" }, {});
+		expect(res.isError).toBe(true);
+		expect((res.content[0] as { text: string }).text).toContain(
+			"regular expression",
+		);
+	});
+
+	test("kinds and context reach the engine", async () => {
+		const { tool, taskId } = await closedTaskWithLog([
+			ev.assistantText("preceding line"),
+			ev.toolResult("bash", "needle in output"),
+		]);
+		const off = await call(tool, { taskId, query: "needle" });
+		expect(off).toContain("No matches");
+		const on = await call(tool, {
+			taskId,
+			query: "needle",
+			kinds: ["tool_result"],
+			context: 1,
+		});
+		expect(on).toContain("needle in output");
+	});
+
+	test("is offered to internal agents AND external MCP clients", async () => {
+		// ⚠️ `availability` gates ONLY the external list — `createOrchestratorTools`
+		// maps every def with no filter, which is why `get_logs`, declared
+		// "external", is callable in the loop. So "both" is asserted here as the
+		// honest declaration rather than inferred from the tool being present.
+		const { buildAllToolDefs } = await import("./orchestrator-tools.ts");
+		const def = buildAllToolDefs().find((d) => d.name === "search_logs");
+		expect(def?.availability).toBe("both");
+	});
+
+	test("the tool result is bounded by the same budget as the engine", async () => {
+		const { tool, taskId } = await closedTaskWithLog(
+			Array.from({ length: 300 }, () =>
+				ev.assistantText(`needle ${"z".repeat(4000)}`),
+			),
+		);
+		const out = await call(tool, {
+			taskId,
+			query: "needle",
+			limit: 100,
+			context: 5,
+		});
+		expect(out.length).toBeLessThanOrEqual(LOG_SEARCH_LIMITS.totalChars);
+	});
+});
+
+describe("a hit does not overstate what it shows", () => {
+	test("a multi-field match names the excerpt's field and counts the event", async () => {
+		// `matches` is the EVENT's count; `field` is only where the excerpt came
+		// from. Labelling the count as the field's would be a small dishonesty
+		// the reader has no way to detect — the excerpt shows one, the line
+		// claims three.
+		const file = writeLog([
+			ev.message("task_message", {
+				title: "needle in the title",
+				content: "needle in the content, needle again",
+			}),
+		]);
+		const r = await search(file, { query: "needle" });
+		expect(r.matchingEvents).toBe(1);
+		expect(r.totalMatches).toBe(3);
+		const out = formatLogSearchResult(r, "T", "needle");
+		expect(out).toContain("in this event");
+		expect(out).toMatch(/excerpt from body\.\w+/);
 	});
 });

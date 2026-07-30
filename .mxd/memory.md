@@ -4427,3 +4427,119 @@ dropped. Its table is a **subtract**-list, so a flag added to the parser and for
 refused side where somebody notices. The instance most likely to be hit is a typo — `--baseurl`
 silently vanished, creating a group against Anthropic's own endpoint with someone else's key, and
 every call 401'd as if the key were bad.
+
+## ⭐ A migration that adds an identifier makes it non-uniform FOREVER — two instances, two subsystems
+
+**Every reader of a newly-introduced id needs a DEFINED rendering for the pre-migration half, and
+the default failure is that teaching the new mechanism is the very act that makes the old data look
+broken.** Two instances now, which is what turns it from a footnote on one feature into something to
+check whenever an id is introduced:
+
+| the id | who lacks it | measured |
+|---|---|---|
+| `Task-Id:` commit trailer | every commit before the hook landed | 1280 historical commits, and 92% of merges never named a task anyway |
+| event `eid` | every event before stamping | **3296 of 397,771 events (0.83%)**, newest **2026-04-16**; oldest stamped 2026-03-31 |
+
+⭐ **The sharper half, shared by both: the pre-migration population and the population you most want
+are THE SAME POPULATION.** A retrieval tool reaches for the oldest history — that is what it is for —
+so the hole sits exactly where the value is. `search_logs`' motivating find is a **2026-04-05**
+event, inside the unstamped window. A reader that drops unnamed events, or that refuses to render
+them, is broken precisely on its best case while looking correct on every fixture.
+
+**The resolution both times: render the hit and say the name is missing.** ⚠️ And make the absence
+**structural, not typographic** — `search_logs` emits NO `eid=` token at all rather than
+`eid=(none)`, so anything parsing for `eid=([0-9a-f]{12})` finds nothing and concludes "absent"
+instead of capturing a placeholder that reads like a real name. Pinned by a test asserting
+`out.includes("eid=") === false`.
+
+⚠️ **Root asserted "every hit is identified by eid" from the memory rule alone** (*Nothing in this
+codebase may address an event by file position* — which is correct, and positional addressing stays
+out). The rule was right; its universality was not, and one scan of the corpus was what showed it.
+**A rule quoted from this file is a hypothesis about the data until somebody counts.**
+
+## `search_logs` — the conversation is searchable, one task at a time
+
+`search_tasks` indexes title, description and each done() round's result: the DECISIONS.
+`src/log-search.ts` searches the conversation: **how they were reached**, which is the only place a
+user's own words survive before anyone retold them. Description is written after the decision (one
+retelling), a result round after the work (another) — and the hedge in *"我记得…"* was lost between
+those two retellings while carrying a design conclusion for four months.
+
+⚠️ **SCOPE, and the thing to refuse: one task, scanned on demand, NO index.** Rebuilding the existing
+index over 1115 SHORT documents costs 697s wall / 3044s CPU; this project's 454 session files are
+**600MB**. A global conversation index is not a smaller version of that problem.
+
+**Measured on the largest real file (root's session, 113.5MB / 71,148 events, 2026-07-30):** full
+streaming parse **154ms**, full search ~300ms. ⭐ **So the cost that needed bounding was MEMORY, not
+time** — hold the parsed events and you cost hundreds of MB inside the worker running the agent
+loop. Stream and reduce each event immediately; never accumulate. **NEGATIVE RESULT: a raw substring
+pre-filter before `JSON.parse` measured 51ms vs 154ms — a real 3× on something already negligible,
+bought with a silent soundness hole**, since JSON escapes `"`, `\` and control chars so any query
+containing one would fail to match lines that do contain it. Not worth it.
+
+⭐ **Where the text lives is NOT uniform, and the task description that warned about this got two of
+its three rows wrong.** Measured: `message` → `body`, `assistant_text` → **`content`**, `thinking` →
+**`thinking`**, `tool_call` → `input` (no `body` at all), `tool_result` → `content`. The brief said
+`assistant_text` and `thinking` both used `body`. **So the fix is not a better per-type table — it is
+not having one:** walk every string leaf and SUBTRACT a named set of identifier/blob fields
+(`eid`, `taskId`, `signature`, `source`, …). A new event type is then searchable for free, where an
+include-list of "fields worth reading" fails silently forever.
+
+⚠️ **`signature` is the expensive subtraction**: thinking is 22MB of root's session and much of it is
+base64.
+
+**Kind = type + its discriminator** (`message:user`, `tool_call:mcp__mxd__bash`), filters match a
+group by prefix. Default = everything MINUS `tool_result` (14,320 events / 33.9MB),
+`message:work_context` (22 events / 4.5MB) and `session_config` (31 events / 3.0MB). ⭐ **The
+principle for adding a fourth is not size — it is that all three are COPIES OF SOMETHING ELSE**, so a
+hit inside one crowds out content that exists nowhere else. `message:user` is the single biggest
+category and is the whole point.
+
+⚠️ **Whatever is skipped, the header SAYS SO, and a zero result lists the kinds the file does hold.**
+Otherwise "no matches" and "you searched the wrong kinds" are byte-identical, and the wrong one
+silently confirms whatever the caller already believed.
+
+### ⭐ Cap on BYTES, never on event count — and why a type-keyed cap would have rotted
+
+`01KP1B56XZX4BT56EGTKS5K74Y` measured `get_logs` at 60KB+/call in **April 2026** and traced it to
+`tool_result` content plus thinking-signature blobs; that is why `hideToolResults` defaults true and
+signatures are stripped. **RE-MEASURED 2026-07-30: `get_logs(begin=0, end=2)` — TWO events — still
+returns ~60KB, now from `work_context` preloading the whole of `memory.md`.** The April fix works and
+simply does not cover this path.
+
+> **One oversized category was identified and mitigated, and a different one grew into the same
+> envelope. A byte-keyed cap survives that substitution; a cap keyed on "which event types are big"
+> was correct in April and wrong today.**
+
+And a count bounds nothing regardless: one `message:user` in root's session is **1.68MB**, so a
+single event can outweigh every other event combined.
+
+⚠️ **The over-strict half of a budget guard is invisible, and it was the ONE survivor of 30
+mutations.** Dropping the "always render the first hit" escape reddens nothing, because with
+production's numbers one hit can never fill the budget — so the failure it allows (a header
+announcing *"166 matching events"* above zero hits, which reads as a broken search) is unreachable
+*today* and one raised `maxContext` away from shipping. Two things fix it, and both were needed: an
+**injectable budget** so the failing path can be exercised at all, and an assertion that
+`MAX_SINGLE_HIT_CHARS < totalChars` — **a relationship between two constants declared far apart,
+i.e. an invariant that holds by coincidence until someone edits one of them.** ⚠️ Injecting the
+budget then created its own survivor: a mutation ignoring the parameter is harmless in production
+(every real call takes the default) and **silently makes the over-strict test vacuous**, so it needs
+a positive control asserting a smaller budget really does produce a smaller result.
+
+⚠️ **A zero-length-match regex (`q*`) is a SYNCHRONOUS infinite loop, and no test timeout can
+interrupt it** — measured: the mutation harness sat for 622s and bun's per-test timeout never fired,
+because the blocked event loop cannot run it. `if (m[0].length === 0) re.lastIndex++` is the whole
+guard. **On macOS there is no coreutils `timeout`**, so a harness must bound the run itself and
+report a hang as its own verdict rather than as a pass.
+
+**Context events are drawn from the same filtered population and only from events that HAVE text.**
+Both halves came from reading real output, not from reasoning: without the filter ±1 event is almost
+always `usage` or `messages_consumed`, and the first render showed `(no text)` under half the hits.
+Context text is the **longest** leaf, not the first — a `tool_call`'s first leaf is the tool NAME, so
+"first" rendered every bash call as the bare string `mcp__mxd__bash` with the command one field away.
+
+⭐ **`availability` gates ONLY the external MCP list.** `createOrchestratorTools` maps every def with
+no filter at all, so internal agents receive `"external"`-declared tools too — which is why
+`get_logs`, declared `"external"`, is callable from inside the agent loop. **So the flag is a claim
+about the external list and NOT a statement of who can call the tool**; do not read it as one, and
+do not copy a neighbouring tool's value without checking what it produces.

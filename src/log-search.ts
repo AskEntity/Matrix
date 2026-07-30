@@ -227,7 +227,13 @@ export interface LogSearchHit {
 	eid?: string;
 	/** Dotted path of the field that matched, e.g. `body.content`, `input.command`. */
 	field: string;
-	/** Number of matches inside that field. */
+	/**
+	 * Matches in the whole EVENT, not just in `field` — an event can match in
+	 * several leaves (`body.content` and `body.title`) and `field` names only
+	 * the one the excerpt came from. Rendered with that stated, because
+	 * "matched body.content — 3 matches" when the excerpt shows one is the kind
+	 * of small dishonesty a reader has no way to detect.
+	 */
 	matches: number;
 	/** Length of the full field text, so a truncated excerpt says what it cut. */
 	fieldChars: number;
@@ -622,18 +628,45 @@ function renderContext(
 }
 
 /**
+ * The largest a single rendered hit can be, from the caps alone: the match
+ * excerpt, plus context either side, plus generous per-line overhead.
+ *
+ * ⚠️ This exists to be COMPARED against `totalChars`, because the "always show
+ * at least one hit" escape below is safe only while a single hit cannot fill
+ * the whole budget — and that is a relationship between two constants declared
+ * far apart, i.e. exactly the kind of invariant that holds today by coincidence
+ * and breaks silently when somebody raises `maxContext`. Pinned by a test.
+ */
+export const MAX_SINGLE_HIT_CHARS =
+	LOG_SEARCH_LIMITS.matchExcerptChars +
+	2 *
+		LOG_SEARCH_LIMITS.maxContext *
+		(LOG_SEARCH_LIMITS.contextExcerptChars + 90) +
+	300;
+
+/**
  * Format a result for an agent, under a hard character budget.
  *
  * The budget is enforced by BUILDING until it is reached and then saying how
  * many hits were dropped — not by trusting the per-hit caps to add up. A cap
  * that is merely expected to hold is the failure this whole module is guarding
  * against.
+ *
+ * `budget` is injectable for one reason, stated so nobody removes it as unused
+ * indirection: the over-strict half of the budget guard is otherwise
+ * untestable. A mutation dropping the "always show the first hit" escape
+ * SURVIVED the whole suite, because with production's numbers a single hit can
+ * never exceed the budget — so the only way to exercise the failing path is to
+ * shrink the budget. And that failure is a bad one: a header announcing "166
+ * matching events" above zero hits reads as a broken search rather than as a
+ * cap doing its job.
  */
 export function formatLogSearchResult(
 	result: LogSearchResult,
 	taskId: string,
 	query: string,
 	now: number = Date.now(),
+	budget: number = LOG_SEARCH_LIMITS.totalChars,
 ): string {
 	if (!result.fileExists) {
 		return (
@@ -690,17 +723,18 @@ export function formatLogSearchResult(
 			`#${shown + 1}  ${hit.kind}  ${stamp(hit.ts, now)}  ${identity(hit)}`,
 		);
 		lines.push(
-			`    matched ${hit.field} — ${plural(hit.matches, "match", "matches")} in ${hit.fieldChars.toLocaleString()} chars`,
+			`    excerpt from ${hit.field} (${hit.fieldChars.toLocaleString()} chars) — ${plural(hit.matches, "match", "matches")} in this event`,
 		);
 		for (const c of hit.before) lines.push(renderContext("before ", c, now));
 		lines.push(`    >>> ${hit.excerpt}`);
 		for (const c of hit.after) lines.push(renderContext("after  ", c, now));
 
 		const block = lines.join("\n");
-		// `shown > 0` lets a single oversized hit through: one hit is the minimum
-		// useful answer, and it is still bounded — excerpt 400 + context
-		// 2×maxContext×160 + line overhead is ~3K chars, a quarter of the budget.
-		if (used + block.length > LOG_SEARCH_LIMITS.totalChars && shown > 0) {
+		// `shown > 0` lets the FIRST hit through whatever its size: a result that
+		// reports matching events and renders none of them looks like a broken
+		// search, not like a cap working. It stays bounded because a single hit
+		// cannot exceed MAX_SINGLE_HIT_CHARS — see the note there.
+		if (used + block.length > budget && shown > 0) {
 			budgetStopped = true;
 			break;
 		}
@@ -715,7 +749,7 @@ export function formatLogSearchResult(
 		tail.push("");
 		tail.push(
 			budgetStopped
-				? `${shown} of ${result.matchingEvents.toLocaleString()} matching events shown — stopped at the ${LOG_SEARCH_LIMITS.totalChars.toLocaleString()}-char output budget. Narrow the query, or lower \`context\`.`
+				? `${shown} of ${result.matchingEvents.toLocaleString()} matching events shown — stopped at the ${budget.toLocaleString()}-char output budget. Narrow the query, or lower \`context\`.`
 				: `${shown} of ${result.matchingEvents.toLocaleString()} matching events shown, oldest first (\`limit\`=${result.hits.length}). Narrow the query to see the rest.`,
 		);
 	}
