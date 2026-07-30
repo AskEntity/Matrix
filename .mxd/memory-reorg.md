@@ -382,9 +382,16 @@ one identifier at a time, and an orphaning is a relation between two sites.**
 
 The check that closes it is cheap and belongs in the adjudication loop rather than after it:
 
-> **For every identifier you are about to record as a deliberate drop, take its longest alphabetic
-> run and grep the OUTPUT for it, case-insensitively.** `fable-5` dropped, `Fable` survives, one
-> hit, one pass.
+> **For every identifier you are about to record as a deliberate drop, take its FIRST alphabetic run
+> and grep the OUTPUT for it, case-insensitively.** `fable-5` dropped, `Fable` survives, one hit,
+> one pass.
+
+**First run, not longest — this rule was written as "longest" and measured wrong within the hour.**
+`gpt-4.1-mini` gives `mini`, `sk-ant-` gives `ant` at 178 hits, `codex-auto-review` gives `review`.
+**The longest run is routinely the least distinctive part of a name; the first run is the family.**
+The failure direction matters more than the error: a check that answers 178 for a name with no
+surviving use is not a false positive anyone argues with, it is noise, and noise is what gets a
+check abandoned rather than fixed.
 
 **It matters for NAMES, not for symbols.** A dropped symbol usually still has a definition in the
 source, so a surviving use remains resolvable by the reader. A codename, a vendor generation, a
@@ -397,3 +404,60 @@ correctly removed. Either restore just enough at the SURVIVING site to make the 
 alone, or delete the clause that depends on it — and prefer the second when the paragraph itself
 says the mechanism is dormant, because a definition maintained for a dormant mechanism is a line
 paid for on every launch forever.
+
+### The identifier is not the best anchor available. It is the ONLY one
+
+**Ask the rule question, not the token question — and the reason you cannot simply ask it everywhere
+is a measurement, not an excuse.** The caps failure was a substitution: testing *is this token
+needed* where the question was *does the rule this token carried survive*. The obvious correction is
+to check every rule directly. **It is not mechanizable.**
+
+| long bold spans (>=40 chars) | count |
+|---|---|
+| in the input | 1201 |
+| in the output | 893 |
+| surviving VERBATIM | **188 — 16%** |
+
+This file already predicted that number from the other side (*"the bold runs are useless alone —
+about 85% report not verbatim, because rewriting rewords"*). Read forwards it says something
+stronger: **a rewrite rewords 84% of its own rules, so no probe can ask whether a rule survived. The
+identifier is the only anchor that survives rewording, so the dropped identifiers that sat inside a
+bold span are not a subset you settled for — they are the ENTIRE mechanically-adjudicable
+population.** Measured on this run: 175 dropped identifiers, **103** inside a bold span, and that
+set arrives with the rule text attached, so adjudicating it is reading one sentence each.
+
+> **Everything outside those 103 is reachable by no probe anybody can write. It is reachable only by
+> somebody reading.** That is the argument for the cold read being a STEP rather than a courtesy,
+> and it is also why an unowned cold-read report loses the only coverage that set ever gets.
+
+**Yield of the bold-span pass, so the next run can price it:** nine further losses on top of the
+nine the token probe found, one of which is the sharpest single instance in the run — *a negative
+result deleted out of a list of negative results whose stated purpose is "so nobody spends the
+afternoon again"*. The exception that made the list safe to act on went; the list kept its promise.
+
+**State the yield with a SCOPE CLAUSE naming what was adjudicated at rule granularity, because a
+count in a result round is read as a completed measurement.** This run reported *"9 real losses, all
+restored"*, honestly, and it was 18 within the hour. The honest form is *N losses found, from
+token-level adjudication of identifiers/numbers/CJK and rule-level adjudication of nothing.*
+
+**And record an inconsistency you find in the INPUT as inherited, explicitly.** A rewrite is the
+obvious suspect for every inconsistency discovered after it, so *"this was already in the input"*
+costs one clause and stops a future pass paying to re-investigate work that was faithful.
+
+### Symptom scarcity is a standing property of this file, not one curator's slip
+
+The 2026-07-25 cold read measured **4 explicitly symptom-form entries in 81 sections, none in the
+first 700 lines** — in a document that states its own access pattern as organised by cause and
+queried by symptom. That finding was never actioned, and **the rewrite in between deleted another
+one**: the user-visible symptom of connector-text summarization, *the user's reply vanishes into the
+thinking fold*, went while the mechanism survived in full. Two independent passes, and it got worse
+across the pass between them.
+
+> **A symptom looks most redundant exactly when you have finished understanding its mechanism. So
+> the moment you are best qualified to curate a section is the moment you are least able to keep its
+> retrieval key** — which is why this cannot be fixed by curating more carefully, and has to be
+> checked for by name.
+
+The reader arrives holding *"my reply disappeared into the thinking fold"*, never *"connector text
+is summarized server-side"*. **Count the symptom-form entries after a rewrite and state the
+number.**
