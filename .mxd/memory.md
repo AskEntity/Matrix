@@ -439,9 +439,16 @@ rollback to a message the agent never ran from, the operation would still be **e
 points at nothing. **Reasons must survive their failure mode disappearing.**
 
 The same error, elsewhere and in different clothes: a permission list sorted by MECHANISM ("these
-all modify an existing node") grouped *recording intent* with *destroying resources*; and
-`close_task` asks `status` when it means "is an agent running on this node", **which status cannot
-answer, because status is what a launch SETS rather than what a launch IS.**
+all modify an existing node") grouped *recording intent* with *destroying resources*.
+
+**A former example of this class was RETRACTED, and how it failed is worth more than it was.** It
+read: *`close_task` asks `status` when it means "is an agent running", which status cannot answer,
+because status is what a launch SETS rather than what a launch IS.* That was true of the code it
+described and false of the field — `onLaunch` ran at the END of a launch, so status could not
+answer; moved into the launch lock's own tick it reports "a launch has begun", which is the question
+close is actually asking. **The property was of the WRITE POSITION, not of the field, and reading it
+as the field's nature is the very error this section names** — one level up, aimed at the diagnosis
+instead of at the code. See *Only launching agents that will act*.
 
 ## A fixture that cannot express the difference
 
@@ -915,9 +922,40 @@ before `beforeChildLaunch`, or it guards nothing: two concurrent launches both u
 and the loser's throw marked the node `failed` and sent a bogus `task_complete(failed)` while the
 winner was still running. **Never add a node to it from outside `runAgentForNode`** —
 `autoResumeProjects` once pre-registered every node it was about to launch, `runAgentForNode` saw
-the set and returned early, and no agent ever started. **Two guards now cover that window and a
-third consumer of it has none**, which is why the `close_task` race reads as unrelated until you
-notice they are all timing the same seconds.
+the set and returned early, and no agent ever started. **Three consumers time those same seconds,
+which is why they read as unrelated bugs until you notice the window is one window.**
+
+**The third was `close_task`, and it is shut — by ANNOUNCING the launch instead of adding a guard**
+(`01KYNAKQDJTMVXWCQ3T62FHMZA`). `onLaunch`, Matrix's one-line flip to `in_progress`, used to run at
+the END of a launch, after the seconds of
+`beforeChildLaunch`; it now runs as the first statement inside the lock's own synchronous tick, so
+`close_task`'s existing `in_progress` refusal covers the whole launch. **The window is ZERO rather
+than smaller**, on the same discipline the lock rests on — check, `add()` and flip are one tick with
+no await between them, so nothing can interleave. Two fixes that would have added a SECOND source of
+truth (ask `ctx.launchingNodes`; give `closeTaskOp` an `awaitLoopExit`) were on the table and the
+user rejected both: 「启动的时候必须先等状态改好 不然不能启动…而一旦 status 被设置成 in progress
+就没有人能随意动他了」.
+
+**TWO doors reach that window and only one goes through `onLaunch`** — the REST `/continue`
+reactivation branch writes `in_progress` itself, so fixing the hook alone leaves a node closable for
+the whole worktree create on the other door. The rest of the map, because no single file shows it:
+`deliverMessage`'s root branch already flipped synchronously with its guard, `/continue`'s
+has-worktree branch and `/restart` flip before launching, and `autoResume` needs no flip because it
+only resumes nodes already `in_progress`.
+
+**Announcing first makes the FAILURE path load-bearing, and the two doors answer it differently on
+purpose.** A throwing `beforeChildLaunch` used to leave the old status and now leaves `in_progress`
+— a node with no agent, which `close_task` refuses. On the `deliverMessage` door that is not a new
+state (`reportAutoLaunchFailure` marks it `failed`, as before; the Phase 2 relaunch only logs and
+relaunches a node already `in_progress`). The REST door has no such handler, so it **restores the
+status it found** — leaving `in_progress` would hand the caller a 500 plus a node they can no longer
+close, which is *Never offer a remedy that will not work* arriving as a state rather than a message.
+
+**Holding the window open is what makes any of this testable, and it is cheap**: a gated
+`beforeChildLaunch` parks the launch, the test calls `closeTaskOp` from inside it, and asserts the
+DAMAGE — refused, and no worktree removal requested. Against the pre-fix code both door tests fail
+with `Expected promise that rejects / Received promise that resolved`, which is the bug stated
+exactly.
 
 ## done() is two-phase
 
@@ -4346,21 +4384,6 @@ parent the user stopped should not be dragged back by its children — but `task
 violates it, so **at least two of the three have to move.** Deferred by the user: settle the policy
 question first, then make all three agree.
 
-**`close_task` can land inside the launch window. This is a race condition between closing a task
-and starting its agent, and the racing window is `git worktree add` — seconds wide.**
-`ensureChildAgentRunning` takes the launch lock, awaits `beforeChildLaunch`, and only afterwards
-calls `onLaunch`, which is the step that flips the status to `in_progress`. For that whole span the
-node still reads as its OLD status, so a `close_task` arriving mid-launch passes the guard and the
-agent then comes up on a node marked `closed`, with its worktree either already deleted or recorded
-as null. **Nothing throws and nothing crashes — the tree says closed while the process runs**, which
-is the most expensive bug shape this repo has. It could always land there on a woken
-`verify`/`failed` task; narrowing the refusal to `in_progress` widened it to `pending` too, making
-it more reachable without changing it in kind. `deleteTaskOp` and `resetTaskOp` hold the window shut
-with `stopTask` + `awaitLoopExit`; `closeTaskOp` has neither. **The deeper answer, and the reason
-the fix may not be another `awaitLoopExit`: the guard is asking a question `status` cannot answer**
-— asking `ctx.launchingNodes` / `agentLoopPromises` asks the real question. Draft
-`01KYNAKQDJTMVXWCQ3T62FHMZA`.
-
 **Tool search** — dynamic tool discovery instead of sending every tool, so a large MCP tool set
 stops costing context on every request. Anthropic's server-side answer is `defer_loading: true` plus
 a `tool_search` server tool that injects one on demand; the user prefers a client-side design. **The
@@ -4527,48 +4550,3 @@ say a past measurement usually holds while a past *"so we decided not to"* may n
 delete the false sentence and add nothing** — the true version is already in the payload headers,
 and restating it in the prompt would be the same paragraph in two places, free to drift. **Silence
 where another surface already speaks is correct; an assertion in the opposite direction is not.**
-
-## CORRECTION: the launch window is shut, and `status` answers what its WRITE POSITION lets it
-
-Fixed in `01KYNAKQDJTMVXWCQ3T62FHMZA`. Two entries above are now out of date, both about
-`close_task` landing inside the launch window: the *Known bugs and open design* entry that describes
-it as open, and *Taking a PROPERTY of a thing for the thing itself*, which reads `close_task` asking
-`status` as a category error on the ground that **status is what a launch SETS rather than what a
-launch IS**.
-
-**That sentence was true of the code it described and false of the field.** `onLaunch` — Matrix's
-one-line flip to `in_progress` — ran at the END of the launch, after the seconds-long
-`beforeChildLaunch`, so `status` genuinely could not answer "is a launch under way". Moved into the
-launch lock's own synchronous tick it reports "a launch has begun", which is exactly what close has
-to refuse. **The same field answers a different question depending on where it is written**, so that
-entry is about an ORDERING and not about a field unfit for the job. The two fixes that would have
-added a second source of truth — ask `ctx.launchingNodes`, or add `awaitLoopExit` to `closeTaskOp`
-— were both on the table and the user rejected both: 「启动的时候必须先等状态改好 不然不能启动…而
-一旦 status 被设置成 in progress 就没有人能随意动他了」.
-
-**The window is ZERO rather than smaller, on the same discipline the launch lock already rests on**:
-the `has`-check, the `add()` and the flip are one synchronous tick with no await between them, so on
-a single-threaded event loop no other tool call can interleave. `try {` does not break that, which
-is why the flip sits inside the try and so still releases the lock if a plugin hook throws.
-
-**TWO doors reach that window and only one goes through `onLaunch`.** `ensureChildAgentRunning`
-calls the hook; the REST `/continue` reactivation branch writes `in_progress` itself, so fixing the
-hook alone leaves a node closable for the whole of `git worktree add` on the other door. The rest of
-the map, because no single file shows it and the next person will re-derive it: `deliverMessage`'s
-root branch already flipped synchronously with its guard, `/continue`'s has-worktree branch flips
-before it launches, `/restart` flips before `runAgentForNode`, and `autoResume` needs no flip at all
-because it only resumes nodes that are already `in_progress`.
-
-**Announcing the launch first makes the FAILURE path load-bearing, and the two doors answer that
-differently on purpose.** A throwing `beforeChildLaunch` used to leave the old status; it now leaves
-`in_progress` — a node with no agent, which `close_task` refuses. On the `deliverMessage` door that
-is not a new state: `reportAutoLaunchFailure` marks it `failed` exactly as before, and the Phase 2
-relaunch (the second caller, which only logs) relaunches a node that was already `in_progress`. The
-REST door has no such handler, so it restores the status it found — leaving `in_progress` there
-would hand the caller a 500 plus a node they can no longer close, which is *Never offer a remedy
-that will not work* arriving as a state rather than as a message.
-
-**Holding the window open is what makes it testable, and it is cheap**: a gated `beforeChildLaunch`
-parks the launch, the test calls `closeTaskOp` from inside that window, and it asserts the DAMAGE —
-refused, and no worktree removal requested. On the pre-fix code both door tests fail with
-`Expected promise that rejects / Received promise that resolved`, which is the bug stated exactly.
