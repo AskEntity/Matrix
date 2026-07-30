@@ -14,9 +14,14 @@
 // readFileSync removed — work_context hook handles memory injection
 import { join } from "node:path";
 import { z } from "zod";
-import { projectIndexDbPath } from "./data-paths.ts";
+import { projectIndexDbPath, projectTasksDir } from "./data-paths.ts";
 import { donePayloadSchema } from "./done-payload.ts";
 import type { EventSpec } from "./events.ts";
+import {
+	formatLogSearchResult,
+	LOG_SEARCH_LIMITS,
+	searchTaskLog,
+} from "./log-search.ts";
 import {
 	createCrossProjectMessage,
 	createTaskMessage,
@@ -1948,6 +1953,134 @@ export function buildAllToolDefs() {
 								null,
 								2,
 							),
+						},
+					],
+				};
+			},
+		}),
+
+		// ── search_logs ──
+		defineTool({
+			name: "search_logs",
+			/**
+			 * ⚠️ `"both"` decided on this tool's own merits, NOT copied from
+			 * `get_logs`. An agent in the loop is the primary caller — the three
+			 * incidents that motivated this were all an agent trying to recover
+			 * why something was decided — and an external MCP observer wants the
+			 * same thing.
+			 *
+			 * MEASURED while deciding it: `availability` gates ONLY the external
+			 * MCP list (`mcp-endpoint.ts` filters on it). `createOrchestratorTools`
+			 * maps every def with no filter at all, so an internal agent receives
+			 * `"external"`-declared tools too — which is why `get_logs`, declared
+			 * `"external"`, is callable from inside the loop. That makes `"both"`
+			 * the honest declaration here rather than a merely sufficient one.
+			 */
+			availability: "both",
+			description:
+				"Search ONE task's conversation log by scanning its session JSONL. Works on closed tasks — the worktree and branch are gone but the log is not, and a closed task is the case with the most value because a running one can still be asked directly.\n\n" +
+				"This searches what was SAID: user messages, assistant replies, thinking, tool inputs. `search_tasks` covers titles, descriptions and done() results — the decisions — while this covers how they were reached. A user's own words, before anyone retold them, exist only here.\n\n" +
+				"`query` is a regular expression. Results are bounded: each hit is a truncated excerpt plus its surrounding events, and the whole result stops at a fixed character budget, reporting how many matches it did not show. Match counts are for the WHOLE log, so a truncated result still answers 'how many times'.\n\n" +
+				"Kinds are `<type>` or `<type>:<discriminator>` — `message:user`, `assistant_text`, `thinking`, `tool_call:mcp__mxd__bash`. A bare `message` or `tool_call` selects the whole group. `tool_result`, `message:work_context` and `session_config` are skipped unless named, because each is a copy of something readable at its source; the header always says what was skipped.",
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId" },
+				},
+				taskId: {
+					schema: z.string().describe("Task node ID whose log to search"),
+					decl: { kind: "explicit" },
+				},
+				query: {
+					schema: z
+						.string()
+						.describe("Regular expression matched against event text"),
+					decl: { kind: "explicit" },
+				},
+				case_insensitive: {
+					schema: z.boolean().optional(),
+					decl: { kind: "optional" },
+					description: "Case-insensitive match (default false).",
+				},
+				kinds: {
+					schema: z.array(z.string()).optional(),
+					decl: { kind: "optional" },
+					description:
+						"Event kinds to search, replacing the default set. A bare group name matches all of its members.",
+				},
+				context: {
+					schema: z.number().optional(),
+					decl: { kind: "optional" },
+					description: `Surrounding events shown either side of each hit (default ${LOG_SEARCH_LIMITS.defaultContext}, max ${LOG_SEARCH_LIMITS.maxContext}).`,
+				},
+				limit: {
+					schema: z.number().optional(),
+					decl: { kind: "optional" },
+					description: `Maximum hits (default ${LOG_SEARCH_LIMITS.defaultHits}, max ${LOG_SEARCH_LIMITS.maxHits}). The output character budget usually binds first.`,
+				},
+			},
+			handler: async (args) => {
+				const projectId = args.projectId as string;
+				const taskId = args.taskId as string;
+				const query = args.query as string;
+
+				const tracker = R.getTracker(projectId);
+				if (!tracker)
+					return {
+						content: [{ type: "text", text: "Project not found" }],
+						isError: true,
+					};
+				const node = tracker.getTask(taskId);
+				if (!node)
+					return {
+						content: [{ type: "text", text: `Task not found: ${taskId}` }],
+						isError: true,
+					};
+
+				// A running task may hold recent events in the write queue. Flushing
+				// is what makes "search my own conversation" see the current turn.
+				try {
+					await R.getEventStore(projectId).flushSession(taskId);
+				} catch {
+					// No event store for this project (or no session) — the file on
+					// disk is still the answer for a closed task.
+				}
+
+				const { dataDir, dataRoot } = R.getDataPaths();
+				const file = join(
+					projectTasksDir(dataDir, projectId, dataRoot),
+					`${taskId}.jsonl`,
+				);
+
+				let result: Awaited<ReturnType<typeof searchTaskLog>>;
+				try {
+					result = await searchTaskLog(file, {
+						query,
+						caseInsensitive: args.case_insensitive as boolean | undefined,
+						kinds: args.kinds as string[] | undefined,
+						context: args.context as number | undefined,
+						limit: args.limit as number | undefined,
+					});
+				} catch (e) {
+					// Overwhelmingly an invalid regex. Say so with the engine's own
+					// message rather than a generic failure the caller cannot act on.
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Could not search: ${message}\n\`query\` is a regular expression — escape any of . * + ? ( ) [ ] { } | \\ ^ $ that you meant literally.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: formatLogSearchResult(result, taskId, query),
 						},
 					],
 				};
