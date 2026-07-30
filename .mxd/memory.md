@@ -204,11 +204,11 @@ and RE-AIM the tests at a surviving producer; or keep the mechanism with no cove
 the trap**, because it silently pins, as intended behaviour, whatever the mechanism happens to do to
 a producer it was never designed for: chosen by nobody, and thereafter defended by a test.
 
-### Make the operation repeatable and a whole class of reasoning disappears
+### Make the operation IDEMPOTENT and a whole class of reasoning disappears
 
 **Four places in this repo solved a "did somebody already do this?" problem the same way — by making
-the operation safe to run again — and every time the win was not the line saved, it was the
-REASONING retired.**
+the operation idempotent, safe to run again — and every time the win was not the line saved, it was
+the REASONING retired.**
 
 - **`setActivity` early-returns on an unchanged state.** Because an extra call is now harmless, you
   write a transition wherever the loop changes what it is doing and never think about call sites
