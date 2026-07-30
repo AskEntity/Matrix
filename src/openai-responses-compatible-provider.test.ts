@@ -1558,6 +1558,13 @@ describe("streamResponsesAPI (SDK-based)", () => {
 		expect((response as { output_text: string }).output_text).toBe("Hello");
 	});
 
+	// The env guarantee at this door — no OPENAI_ORG_ID / OPENAI_PROJECT_ID /
+	// OPENAI_API_KEY / OPENAI_BASE_URL on the wire, whatever the shell holds — is
+	// asserted in `env-cannot-decide.test.ts` against a real listener. It was
+	// asserted here first, on an intercepted fetch; the receiver version subsumes
+	// it, and the org/project leak happens at header construction, which only a
+	// receiver can see either way.
+
 	test("SDK retries on 429 then succeeds", async () => {
 		let callCount = 0;
 		const fetchMock = mock(async () => {

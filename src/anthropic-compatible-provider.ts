@@ -5,6 +5,7 @@ import type {
 	Tool,
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
+import { resolveAnthropicBaseUrl } from "./config.ts";
 import { resolveContextWindow } from "./context-window.ts";
 import {
 	debugResponsePath,
@@ -926,41 +927,64 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		this.systemPreamble = opts.systemPreamble;
 		// 1 hour timeout — compaction with very large contexts under API load can be slow
 		const timeout = 60 * 60 * 1000;
-		// Base URL override → SDK baseURL. Undefined leaves the SDK default
-		// (api.anthropic.com, or ANTHROPIC_BASE_URL env) in place.
-		const baseURL = opts.baseUrl;
+		// Always explicit, never omitted: the SDK reads ANTHROPIC_BASE_URL for a
+		// `baseURL` we leave out, so where our traffic goes was decided by the
+		// environment whenever the auth group did not name a host. See
+		// resolveAnthropicBaseUrl for the decision.
+		const baseURL = resolveAnthropicBaseUrl(opts.baseUrl);
 		const betaFeatures = [
 			"interleaved-thinking-2025-05-14",
 			"context-management-2025-06-27",
 			"effort-2025-11-24",
 		];
-		if (this.useOAuth) {
-			this.client = new Anthropic({
-				authToken: oauthToken,
-				timeout,
-				...(baseURL ? { baseURL } : {}),
-				defaultHeaders: {
-					"anthropic-beta": ["oauth-2025-04-20", ...betaFeatures].join(","),
-				},
-			});
-		} else if (apiKey) {
-			this.client = new Anthropic({
-				apiKey,
-				timeout,
-				...(baseURL ? { baseURL } : {}),
-				defaultHeaders: {
-					"anthropic-beta": betaFeatures.join(","),
-				},
-			});
-		} else {
-			this.client = new Anthropic({
-				timeout,
-				...(baseURL ? { baseURL } : {}),
-				defaultHeaders: {
-					"anthropic-beta": betaFeatures.join(","),
-				},
-			});
-		}
+		// ⚠️ ONE literal, naming EVERY credential slot, because the SDK reads env
+		// for any slot left `undefined` — `if (apiKey === undefined) apiKey =
+		// readEnv('ANTHROPIC_API_KEY')` — and omitting a slot is the same as
+		// `undefined`. `null` is the SDK's own documented way to say "do not look
+		// in the environment" (its signature is `string | null | undefined`).
+		//
+		// It is not merely that env would outrank config: authHeaders() emits one
+		// header per filled slot, and the API REJECTS a request carrying both
+		// `x-api-key` and `authorization`. A shell holding ANTHROPIC_API_KEY for
+		// some other project used to break the OAuth path outright, with an error
+		// that pointed at the OAuth token.
+		//
+		// ⭐ It is one literal rather than three branches so that forgetting a slot
+		// is UNREPRESENTABLE rather than merely absent: with a branch per case, the
+		// fourth branch somebody adds next year reopens the hole and nothing goes
+		// red. Same move as `OpenAICredentialSource` becoming a function type so
+		// holding a token is not expressible.
+		//
+		// `|| null` and not `?? null`, for a type reason and a measured one.
+		//
+		// The type reason is the load-bearing one: both locals are `string |
+		// undefined`, and `undefined` in a slot is exactly what sends the SDK to
+		// env. `|| null` (or `??`) is what keeps that impossible.
+		//
+		// ⚠️ MEASURED, because the obvious justification for `||` is FALSE and I
+		// wrote it down before checking. The two slots do NOT treat `""` alike:
+		//   apiKey: ""     → authHeaders builds `x-api-key: ""`, and then
+		//                    validateHeaders REFUSES — no request, same error as
+		//                    `null`. So for this slot `||` and `??` are equivalent.
+		//   authToken: ""  → `Authorization: Bearer` with nothing after it, and the
+		//                    request IS SENT. Malformed rather than unauthenticated.
+		// `useOAuth = Boolean(oauthToken && !apiKey)` is what makes the dangerous
+		// one unreachable: an empty `oauthToken` never enters the OAuth arm. Keep
+		// `||` because it classifies `""` as "none" the way the old
+		// `else if (apiKey)` did, and do not "simplify" the useOAuth guard without
+		// re-reading this.
+		this.client = new Anthropic({
+			apiKey: this.useOAuth ? null : apiKey || null,
+			authToken: this.useOAuth ? oauthToken || null : null,
+			timeout,
+			baseURL,
+			defaultHeaders: {
+				"anthropic-beta": (this.useOAuth
+					? ["oauth-2025-04-20", ...betaFeatures]
+					: betaFeatures
+				).join(","),
+			},
+		});
 		this.model = model;
 		this.thinkingEffort = opts.thinkingEffort;
 	}

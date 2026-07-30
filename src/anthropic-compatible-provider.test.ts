@@ -38,6 +38,7 @@ import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import type { ProviderAdapter } from "./provider-shared.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
+import { withClientEnv } from "./test-utils/sdk-client-env.ts";
 import { createMockAnthropicClient } from "./test-utils/mock-anthropic-api.ts";
 import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
 import { type ParamDefs, toToolDefinition } from "./tool-def.ts";
@@ -5103,27 +5104,46 @@ describe("systemPreamble", () => {
 });
 
 // ── baseUrl tests ──
+//
+// ⚠️ Both of these pin ANTHROPIC_BASE_URL, and the second one NEEDS it: before
+// 2026-07-30 the SDK read that variable for an omitted `baseURL`, so "the default
+// applies" was true only on a machine whose shell did not set it. The test passed
+// for a reason that was a fact about the person running it.
 
 describe("baseUrl", () => {
 	test("baseUrl option is passed to the SDK client as baseURL", () => {
-		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
-			apiKey: "test-key",
-			baseUrl: "https://proxy.example.com",
-		});
-		// biome-ignore lint/suspicious/noExplicitAny: inspecting private client
-		const client = (provider as any).client as Anthropic;
+		const client = withClientEnv(
+			{ ANTHROPIC_BASE_URL: "https://env-should-never-decide.example.com" },
+			() =>
+				clientOf(
+					new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+						apiKey: "test-key",
+						baseUrl: "https://proxy.example.com",
+					}),
+				),
+		);
 		expect(client.baseURL).toBe("https://proxy.example.com");
 	});
 
-	test("without baseUrl: SDK default baseURL is used", () => {
-		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
-			apiKey: "test-key",
-		});
-		// biome-ignore lint/suspicious/noExplicitAny: inspecting private client
-		const client = (provider as any).client as Anthropic;
+	test("without baseUrl: WE choose api.anthropic.com — the environment cannot", () => {
+		const client = withClientEnv(
+			{ ANTHROPIC_BASE_URL: "https://env-should-never-decide.example.com" },
+			() =>
+				clientOf(
+					new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+						apiKey: "test-key",
+					}),
+				),
+		);
 		expect(client.baseURL).toBe("https://api.anthropic.com");
 	});
 });
+
+/** The SDK client a provider built, for tests that inspect what it holds. */
+function clientOf(provider: AnthropicCompatibleProvider): Anthropic {
+	// biome-ignore lint/suspicious/noExplicitAny: inspecting private client
+	return (provider as any).client as Anthropic;
+}
 
 // ── The deleted credential env fallbacks stay deleted ──
 //
@@ -5165,59 +5185,13 @@ describe("baseUrl", () => {
 // the opposite of reality.
 
 describe("the deleted credential env fallbacks stay deleted", () => {
-	const CREDENTIAL_ENV = [
-		"ANTHROPIC_API_KEY",
-		"ANTHROPIC_AUTH_TOKEN",
-		"CLAUDE_CODE_OAUTH_TOKEN",
-	] as const;
-
-	/**
-	 * Run `fn` with exactly `vars` set among the credential env names — every
-	 * other one deleted — restoring all of them afterwards on every path.
-	 *
-	 * Deleting the ones we are not setting is not tidiness, and it is MEASURED
-	 * rather than reasoned: with both `??`s restored — the shape an actual revert
-	 * of 289a3bf2 has, since the two lines went together — and this loop removed,
-	 * the CLAUDE_CODE_OAUTH_TOKEN test PASSES on a machine whose shell holds
-	 * ANTHROPIC_API_KEY, and fails with the loop in place. `useOAuth =
-	 * Boolean(oauthToken && !apiKey)`, so an ambient key suppresses the branch
-	 * the test is watching for. (Restoring only the oauth line is red either way,
-	 * because then nothing reads ANTHROPIC_API_KEY at all.) A fixture has to pin
-	 * every input the branch reads, or its redness depends on whose shell it ran
-	 * in — and matrix developers plausibly do hold that variable.
-	 *
-	 * Restoring is equally load-bearing in the other direction: a leaked
-	 * ANTHROPIC_API_KEY pollutes every later test that builds an Anthropic
-	 * provider, in the direction that makes them look like they work. Verified
-	 * both ways — absent before stays absent after, and a pre-existing value
-	 * comes back byte-identical.
-	 */
-	function withCredentialEnv<T>(
-		vars: Partial<Record<(typeof CREDENTIAL_ENV)[number], string>>,
-		fn: () => T,
-	): T {
-		const saved = CREDENTIAL_ENV.map(
-			(k) => [k, process.env[k]] as const satisfies readonly [string, unknown],
-		);
-		try {
-			for (const k of CREDENTIAL_ENV) delete process.env[k];
-			for (const [k, v] of Object.entries(vars)) process.env[k] = v;
-			return fn();
-		} finally {
-			for (const [k, v] of saved) {
-				if (v === undefined) delete process.env[k];
-				else process.env[k] = v;
-			}
-		}
-	}
-
 	/** The two observables that separate the branches of the constructor. */
 	function credentialShape(provider: AnthropicCompatibleProvider): {
 		authToken: string | null;
 		beta: string;
 	} {
-		// biome-ignore lint/suspicious/noExplicitAny: private client, protected _options
-		const client = (provider as any).client;
+		// biome-ignore lint/suspicious/noExplicitAny: protected _options
+		const client = clientOf(provider) as any;
 		return {
 			authToken: client.authToken,
 			beta: client._options?.defaultHeaders?.["anthropic-beta"] ?? "",
@@ -5225,7 +5199,7 @@ describe("the deleted credential env fallbacks stay deleted", () => {
 	}
 
 	test("a populated CLAUDE_CODE_OAUTH_TOKEN is NOT picked up", () => {
-		const { authToken, beta } = withCredentialEnv(
+		const { authToken, beta } = withClientEnv(
 			{ CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-env-should-be-ignored" },
 			() =>
 				credentialShape(
@@ -5242,7 +5216,7 @@ describe("the deleted credential env fallbacks stay deleted", () => {
 	});
 
 	test("a populated ANTHROPIC_API_KEY does NOT outrank a configured OAuth token", () => {
-		const { authToken, beta } = withCredentialEnv(
+		const { authToken, beta } = withClientEnv(
 			{ ANTHROPIC_API_KEY: "sk-env-should-be-ignored" },
 			() =>
 				credentialShape(
@@ -5255,6 +5229,114 @@ describe("the deleted credential env fallbacks stay deleted", () => {
 		expect(authToken).toBe("configured-oauth-token");
 		// …and the OAuth branch ran, which a truthy env apiKey switches off.
 		expect(beta).toContain("oauth-2025-04-20");
+	});
+});
+
+// ── A shell credential cannot reach the API ──
+//
+// The describe above defends OUR deleted reads. This one defends the guarantee
+// those reads were only half of: **the SDK is a second reader of the same
+// variables**, so with zero env reads left in src/ a shell-held credential still
+// reached the wire. @anthropic-ai/sdk's client constructor:
+//     if (apiKey    === undefined) apiKey    = readEnv('ANTHROPIC_API_KEY')    ?? null;
+//     if (authToken === undefined) authToken = readEnv('ANTHROPIC_AUTH_TOKEN') ?? null;
+// Only `undefined` triggers it; `null` is the SDK's own documented way to say
+// "do not look in the environment" (its signature is `string | null |
+// undefined`). There is no disable-env option to reach for instead.
+//
+// ⚠️ Not a hardening chore. authHeaders() emits BOTH `x-api-key` and
+// `authorization` when both slots are filled, and the API rejects a request
+// carrying both. So before this, anyone whose shell held ANTHROPIC_API_KEY — a
+// developer who once exported it for another project — could not use matrix's
+// OAuth path AT ALL, and the auth error they got pointed at their OAuth token.
+// That is the path we bootstrap on every day.
+//
+// ⚠️ THE OBSERVABLE IS THE HEADER SET, and the obvious assertion is vacuous:
+// `expect(client.apiKey).not.toBe(envValue)` is byte-identical before and after,
+// because the SDK reads that variable too. Only what the client will SEND
+// separates the two worlds. Verified red-then-green in both directions, one
+// `null` at a time.
+//
+// Consequence of the third fixture, stated so it is not read as a bug: with no
+// credential configured the client now holds nothing, so the SDK throws
+// "Could not resolve authentication method…" at request time instead of silently
+// running on the shell's key. That is the intended shape — the same trade as
+// deleting DEFAULT_MODEL, where an unconfigured value became visible instead of
+// substituted.
+
+describe("a shell credential cannot reach the API", () => {
+	/**
+	 * The credentials this client would actually SEND, header name → value.
+	 * `authHeaders()` is where the SDK turns apiKey/authToken into headers, and
+	 * it emits one entry per filled slot — which is exactly what makes it the
+	 * discriminating observable.
+	 */
+	async function authHeaderSet(
+		client: Anthropic,
+	): Promise<Record<string, string>> {
+		// biome-ignore lint/suspicious/noExplicitAny: SDK internal
+		const built = await (client as any).authHeaders({});
+		const out: Record<string, string> = {};
+		(built?.values as Headers | undefined)?.forEach((v, k) => {
+			out[k] = v;
+		});
+		return out;
+	}
+
+	test("the OAuth branch sends only authorization, never the shell's x-api-key", async () => {
+		const client = withClientEnv(
+			{ ANTHROPIC_API_KEY: "sk-ant-shell-key-should-never-be-sent" },
+			() =>
+				clientOf(
+					new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+						oauthToken: "configured-oauth-token",
+					}),
+				),
+		);
+		expect(await authHeaderSet(client)).toEqual({
+			authorization: "Bearer configured-oauth-token",
+		});
+	});
+
+	test("the apiKey branch sends only x-api-key, never the shell's authorization", async () => {
+		const client = withClientEnv(
+			{ ANTHROPIC_AUTH_TOKEN: "shell-auth-token-should-never-be-sent" },
+			() =>
+				clientOf(
+					new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+						apiKey: "configured-api-key",
+					}),
+				),
+		);
+		expect(await authHeaderSet(client)).toEqual({
+			"x-api-key": "configured-api-key",
+		});
+	});
+
+	test("with nothing configured, nothing is sent — however full the shell is", async () => {
+		const { bare, configured } = withClientEnv(
+			{
+				ANTHROPIC_API_KEY: "sk-ant-shell-key-should-never-be-sent",
+				ANTHROPIC_AUTH_TOKEN: "shell-auth-token-should-never-be-sent",
+			},
+			() => ({
+				bare: clientOf(
+					new AnthropicCompatibleProvider("claude-sonnet-4-6", {}),
+				),
+				configured: clientOf(
+					new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+						apiKey: "configured-api-key",
+					}),
+				),
+			}),
+		);
+		// Positive control, in the same test: an empty set is also what a reader
+		// that read nothing returns, so prove this reader sees a credential when
+		// there is one to see.
+		expect(await authHeaderSet(configured)).toEqual({
+			"x-api-key": "configured-api-key",
+		});
+		expect(await authHeaderSet(bare)).toEqual({});
 	});
 });
 

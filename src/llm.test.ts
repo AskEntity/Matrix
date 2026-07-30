@@ -339,6 +339,15 @@ describe("LLM facility: Anthropic", () => {
 	});
 });
 
+// ── Where the facility's env sentinels live ──
+//
+// This door's guarantee — a plugin's one-shot call carries the configured
+// credential to the configured host and nothing of the shell's — is asserted in
+// `env-cannot-decide.test.ts`, on a real socket. It used to be asserted here by
+// intercepting `fetch` and reading the headers we would have sent; the receiver
+// version subsumes that, and two mechanisms for one guarantee at one door is the
+// thing this repo keeps deleting.
+
 // ── OpenAI Responses integration ──
 
 describe("LLM facility: OpenAI Responses", () => {

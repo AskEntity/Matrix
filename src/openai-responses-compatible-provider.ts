@@ -525,9 +525,28 @@ export async function* streamResponsesAPI(params: {
 		defaultHeaders["User-Agent"] = "matrix";
 	}
 
+	// ⚠️ `organization` and `project` are pinned to `null` because the SDK takes
+	// ALL FIVE of its slots as default parameters reading env — `organization =
+	// readEnv('OPENAI_ORG_ID') ?? null`, likewise OPENAI_PROJECT_ID — and they
+	// become `OpenAI-Organization` / `OpenAI-Project` headers on every request.
+	// OpenAI documents the consequence: "If no header is provided, the default
+	// organization will be billed." So a shell variable decided which org and
+	// project our traffic was attributed to, with no config field anywhere. Same
+	// rule the Anthropic client sites now follow: env does not get to answer.
+	//
+	// `apiKey` and `baseURL` need no `null` here — both are always passed. That is
+	// true today by other requirements rather than by intent, so it is pinned by a
+	// test rather than left to hold on its own. ⚠️ `apiKey`'s type is `string |
+	// ApiKeySetter | undefined` with NO `null`, so if `authToken` ever became
+	// optional there would be no way to stop OPENAI_API_KEY from filling it: the
+	// thing to keep true is that `authToken` stays required. (`apiKey: ""` does
+	// suppress the read and emits a header with an empty bearer token — measured,
+	// and not a workaround.)
 	const client = new OpenAI({
 		apiKey: params.authToken,
 		baseURL: endpoint.replace(/\/responses$/, ""),
+		organization: null,
+		project: null,
 		maxRetries: params.maxRetries ?? 2,
 		defaultHeaders,
 	});
