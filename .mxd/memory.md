@@ -2317,8 +2317,8 @@ finally returns something."* The scale of the gap, counted over root's whole 110
 (2026-07-30, re-measured rather than inherited): of **14,453 tool calls**, `search` (files) **955**,
 `read_file` **775**, `bash` **4320**, and `search_tasks` **42**. Pick the denominator deliberately,
 because the three available ones differ by 6×: **23** file-searches per tree-search, **41** if
-read_file counts as consulting the tree, **144** against everything that touches the working tree. **Counting it needs `{"type":"tool_call","tool":"…"}` — the field is `tool`,
-not `name`.** A first pass grepping `"name":"mcp__mxd__search_tasks"` returned **10** — a plausible
+read_file counts as consulting the tree, **144** against everything that touches the working tree.
+**Counting it needs `{"type":"tool_call","tool":"…"}` — the field is `tool`, not `name`.** A first pass grepping `"name":"mcp__mxd__search_tasks"` returned **10** — a plausible
 small number that would have "confirmed" the thesis while actually matching that string inside
 tool_result CONTENT, since results quote the text of other calls. **The wrong instrument answered in
 the believable direction, on the very claim it was asked about.**
@@ -4643,12 +4643,14 @@ omit is a slot env fills. `organization` and `project` were never passed, so `OP
 `OPENAI_PROJECT_ID` became `OpenAI-Organization` and `OpenAI-Project` headers on every request, and
 the consequence is vendor-documented rather than inferred: *"If no header is provided, the default
 organization will be billed."* It was surveyed and reported before it was fixed
-(`01KYSD71GAYKD5AAT48C0MFKQN`), which is why the finding and the decision are dated a day apart. **That is env deciding billing attribution**, which is why it belongs
-to a rule about credentials although neither field is one. Both are pinned to `null` now (user:
+(`01KYSD71GAYKD5AAT48C0MFKQN`), which is why the finding and the decision are dated a day apart.
+**That is env deciding billing attribution**, which is why it belongs to a rule about credentials
+although neither field is one. Both are pinned to `null` now (user:
 「env 不许决定」). MEASURED on our real call shape with the shell holding all four names:
 `openai-organization` and `openai-project` arrived as the shell's values on every request, and with
-the two `null`s neither header appears. `apiKey` and `baseURL` were already clean because we always pass them — but that
-was a side effect of other requirements rather than a decision, so the test asserts all four names.
+the two `null`s neither header appears. `apiKey` and `baseURL` were already clean because we always
+pass them — but that was a side effect of other requirements rather than a decision, so the test
+asserts all four names.
 
 **One asymmetry to keep true rather than work around: `apiKey`'s type is `string | ApiKeySetter |
 undefined`, with no `null`.** If `authToken` ever became optional there would be no way to spell "do
