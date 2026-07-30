@@ -43,33 +43,33 @@ addressed to nobody.
 
 **Before applying any rule, ask whether the thing in front of you is a CLAIM or an INSTANCE.** Every
 rule here targets what is presented as CURRENT STATE. An instance cannot rot — it records something
-that was true at a moment, and that moment does not change. *"You see `2116 pass / 2 fail` and cannot
-tell WHICH two"* is not a claim about the suite's size; the story is identical when the suite reaches
-three thousand, and deleting the number leaves it with no shape. The same pattern presented as
-state — *"the suite has 2116 tests"* — expires silently and is what the rule is for.
+that was true at a moment, and that moment does not change. *"You see `2116 pass / 2 fail` and
+cannot tell WHICH two"* is not a claim about the suite's size; the story is identical when the suite
+reaches three thousand, and deleting the number leaves it with no shape. The same pattern presented
+as state — *"the suite has 2116 tests"* — expires silently and is what the rule is for.
 
 ## Step 1 — Restore the understanding, from the task tree
 
-**The WHYs were never lost. They are in the task tree**, in the description of the task that produced
-each section, often in the user's own words. The loss happens at the moment the entry is written: the
-author has just spent hours inside the mechanism, the mechanism is in front of them, and the
-intention is one screen away in a task description they do not re-open.
+**The WHYs were never lost. They are in the task tree**, in the description of the task that
+produced each section, often in the user's own words. The loss happens at the moment the entry is
+written: the author has just spent hours inside the mechanism, the mechanism is in front of them,
+and the intention is one screen away in a task description they do not re-open.
 
-So for each section: `search_tasks` for the task that produced it, `get_task` for its description and
-its **result rounds** (conclusions live in the rounds), and `search_logs` when you need what the user
-actually said, because a description is already a retelling of the decision and a result round is a
-second one.
+So for each section: `search_tasks` for the task that produced it, `get_task` for its description
+and its **result rounds** (conclusions live in the rounds), and `search_logs` when you need what the
+user actually said, because a description is already a retelling of the decision and a result round
+is a second one.
 
 **There are two axes here and they are not the same job.** One is *why we wanted this*. The other is
-*what KIND of thing this is* — and a section can open with a perfect user quote about the first while
-never once naming the second. The exemplar: `close_task` landing inside the launch window had a
-complete, correct timeline, hook order, seconds, which guard is missing, and the words *race
+*what KIND of thing this is* — and a section can open with a perfect user quote about the first
+while never once naming the second. The exemplar: `close_task` landing inside the launch window had
+a complete, correct timeline, hook order, seconds, which guard is missing, and the words *race
 condition* appeared nowhere in the file. Say them and the paragraph is readable at a glance; leave
 them out and every reader rebuilds the concept from a sequence.
 
 **The class-name gap has a cheap mechanical detector, and it is worth running FIRST because one
-command aims the whole pass.** Grep for the standard NAMES of phenomena and look for the ones at zero
-while the phenomenon is plainly described. Measured on one run: `race condition` 0, `TOCTOU` 0,
+command aims the whole pass.** Grep for the standard NAMES of phenomena and look for the ones at
+zero while the phenomenon is plainly described. Measured on one run: `race condition` 0, `TOCTOU` 0,
 `time-of-check` 0, `idempotent` 0, `back-pressure` 0, `off-by-one` 0, against six paragraphs
 describing races and four describing an idempotence fix — while `silent` appeared 121 times.
 
@@ -79,20 +79,20 @@ describing races and four describing an idempotence fix — while `silent` appea
 **The direction of the loss is structural, which is why the tree can always repair it.** A task
 description is written BEFORE the work, while the author still holds the problem as a CATEGORY; the
 memory entry is written AFTER, while they hold the MECHANISM. So descriptions carry class names and
-lack field names, entries carry field names and lack class names, and reading the two side by side is
-not a heuristic — it is the answer sitting in the other document.
+lack field names, entries carry field names and lack class names, and reading the two side by side
+is not a heuristic — it is the answer sitting in the other document.
 
 Three constraints on this step:
 
 - **Do not force a name where the record has none.** Recognising a pattern is a hypothesis to be
-  checked. This repo has already paid for reading several PARTS of one design as several ENTRANCES to
-  one rule, which produced a patch nobody had chosen at a layer nobody had picked. When you cannot
-  find the name, write that the class is unnamed and move on.
+  checked. This repo has already paid for reading several PARTS of one design as several ENTRANCES
+  to one rule, which produced a patch nobody had chosen at a layer nobody had picked. When you
+  cannot find the name, write that the class is unnamed and move on.
 - **Report retrieved and inferred separately.** They are not the same grade of evidence, and the
   person reading your report cannot tell them apart from the diff.
 - **Leave the task id behind.** It is the only entrance to the full record, and without it the next
-  pass re-runs the same archaeology — or fails to, because the vocabulary has moved since.
-  Measured before one pass: 90 of 130 sections carried no id.
+  pass re-runs the same archaeology — or fails to, because the vocabulary has moved since. Measured
+  before one pass: 90 of 130 sections carried no id.
 
 **Hit rate is uneven rather than zero, and the unevenness is the useful signal**: it tells you which
 sections genuinely have no recoverable WHY and therefore need one derived, instead of leaving you to
@@ -119,8 +119,8 @@ What the rewrite is doing, stated as operations on each entry:
   Keep the number that defends a counter-intuitive choice; drop the number that merely proves the
   fix worked, because that is in the code.
 - **Once is an incident, twice is a pattern, three times is architecture.** When the same class of
-  failure appears in five subsystems, that recurrence IS the content: say it once, hang the instances
-  under it. This is the single largest source of compression, and it is invisible to any
+  failure appears in five subsystems, that recurrence IS the content: say it once, hang the
+  instances under it. This is the single largest source of compression, and it is invisible to any
   section-by-section pass, because no two instances share any wording — they were each filed
   correctly, under their own subject.
 - **Write the design as a narrative, not a chronology.** "We went from A to B, here is what it is
@@ -129,19 +129,19 @@ What the rewrite is doing, stated as operations on each entry:
 - **Compression is not terseness.** The line count falls because seven sections became one, not
   because sentences became telegrams. Do not stop writing properly in order to save words.
 
-**A refuted claim is DELETED unless it can be written as a guardrail** — *"do not change Z back to Y;
-Y silently loses W"*. If you cannot write that sentence, the old state goes. An earlier version of
-this document said a refuted claim should become a pointer, and that instruction is what turned
+**A refuted claim is DELETED unless it can be written as a guardrail** — *"do not change Z back to
+Y; Y silently loses W"*. If you cannot write that sentence, the old state goes. An earlier version
+of this document said a refuted claim should become a pointer, and that instruction is what turned
 `memory.md` into a changelog of old claims, corrections and pointers that every agent then paid for
 on every launch.
 
 ### Two sieves, and the first one alone will lie to you
 
-1. **Necessary** — is it one of the things that earn a place at all? (why we wanted it / how the next
-   person falls / what no single file can show / negative results / just enough implementation to
-   read those.) This answers *may it be in `memory.md`*.
-2. **Sufficient** — **if this line were not here, what actually happens?** This answers *does it earn
-   the space*, and the first sieve cannot:
+1. **Necessary** — is it one of the things that earn a place at all? (why we wanted it / how the
+   next person falls / what no single file can show / negative results / just enough implementation
+   to read those.) This answers *may it be in `memory.md`*.
+2. **Sufficient** — **if this line were not here, what actually happens?** This answers *does it
+   earn the space*, and the first sieve cannot:
    - **Silent, unbounded, and paid by someone other than the person who caused it** → keep.
    - **Rings immediately, is visible on the spot, and only bites the person editing that code** →
      cut, however true and however real the pitfall.
@@ -157,10 +157,10 @@ command → cut.
 
 ### Why the surgical route is no longer the method
 
-There used to be a four-phase procedure here — reorder, merge, condense, read through — with a
-`comm -23` invariant, per-region scripts and a section-by-section disposition list. **It worked twice,
-at a smaller size, and it stops working as the file grows**, for a reason worth stating plainly so
-nobody reinstates it:
+There used to be a four-phase procedure here — reorder, merge, condense, read through — checked by a
+set-difference (`comm -23`) invariant, per-region scripts and a section-by-section disposition list.
+**It worked twice, at a smaller size, and it stops working as the file grows**, for a reason worth
+stating plainly so nobody reinstates it:
 
 > **Surgery merges by SUBJECT. It cannot merge by CLASS, because the instances of a class are never
 > adjacent and never share wording.** So a competent surgical pass produces exactly what the
@@ -176,11 +176,11 @@ and the probes below are how you check a rewrite afterwards. They are not how yo
 ## Acceptance — run these AFTER the rewrite
 
 **The enumeration is the only CONTENT check, and every other check passing is what hides that.**
-Measured: a pass reported six checks green — region list, code fences, orphan headings, bold pairing,
-column widths, task-id count — and every one of them is STRUCTURAL. The disposition list is the only
-one that asks whether a fact survived, and skipping it left **nine accidental content losses** under
-an all-green report. That is `memory.md`'s own *a passing gate looks identical whether it read 8% or
-100%*, wearing this document as its medium.
+Measured: a pass reported six checks green — region list, code fences, orphan headings, bold
+pairing, column widths, task-id count — and every one of them is STRUCTURAL. The disposition list is
+the only one that asks whether a fact survived, and skipping it left **nine accidental content
+losses** under an all-green report. That is `memory.md`'s own *a passing gate looks identical
+whether it read 8% or 100%*, wearing this document as its medium.
 
 **The mechanical form, because "list every section's disposition" reads like bookkeeping until you
 have a way to do it:** for each section of the OLD file, pull out every `**bold run**` over ~25
@@ -208,25 +208,26 @@ awk '/^### /{h3=1} /^#### /{if(!h3)print NR}' memory.md   # orphan h4
 grep -nEi 'paragraphs? (down|up|below|above)|section (above|below)|next door'      # positional prose
 ```
 
-**Position-dependent prose is the one kind of rot that MOVING creates**, so it is worth a pass of its
-own whenever material changes region. Two families, neither findable by grepping the names you moved:
-region-relative (*"written up under X in the Gates section"* — the section still resolves, the region
-it names is now wrong) and purely positional (*"three paragraphs down"*, *"next door"*, *"the section
-above"* — no name in them at all). Grep the position words, read every hit, and state the result
-either way; "checked, none crossed" is worth recording so the next pass does not re-derive it.
+**Position-dependent prose is the one kind of rot that MOVING creates**, so it is worth a pass of
+its own whenever material changes region. Two families, neither findable by grepping the names you
+moved: region-relative (*"written up under X in the Gates section"* — the section still resolves,
+the region it names is now wrong) and purely positional (*"three paragraphs down"*, *"next door"*,
+*"the section above"* — no name in them at all). Grep the position words, read every hit, and state
+the result either way; "checked, none crossed" is worth recording so the next pass does not
+re-derive it.
 
 ### The backward identifier survey
 
 Extract every backticked identifier `memory.md` names and check each against the source. The forward
 direction — *"I renamed something, let me grep the file"* — only fires when someone remembers; the
-backward direction needs nobody to remember, which is why it finds a different set. Measured over 485
-identifiers: 41 absent from the repo, most of them deliberate deletion records, and **four were live
-present-tense guidance naming something that no longer exists.**
+backward direction needs nobody to remember, which is why it finds a different set. Measured over
+485 identifiers: 41 absent from the repo, most of them deliberate deletion records, and **four were
+live present-tense guidance naming something that no longer exists.**
 
 - **The endpoint of this survey is a DEFINITION, never another name.** A replacement you find in the
-  source can itself be a phantom: one correction pointed at `wasReplaced`, which also does not
-  exist — it appears three times, all in comments, while the real local is `notReplaced` and its
-  polarity is the opposite. Ask the same question again of whatever you find.
+  source can itself be a phantom: one correction pointed at `wasReplaced`, which also does not exist
+  — it appears three times, all in comments, while the real local is `notReplaced` and its polarity
+  is the opposite. Ask the same question again of whatever you find.
 - **Plant a fake identifier in the input before believing the output.** A `while read` loop silently
   dropped its final line, and the planted control caught it only because it was last. **Put the
   control where truncation risk is highest.** A survey of 485 names that quietly checks 484 reports
@@ -240,37 +241,37 @@ present-tense guidance naming something that no longer exists.**
 
 ### The cold read, by somebody else
 
-The last step is a read-through by an agent with a clean context, **not by whoever did the rewrite.**
-By the end of it you understand the material too well to see what is missing, which is exactly the
-mechanism behind the "destroyed by understanding" rot. Its output is connective repair only —
-transitions, pointers that no longer resolve, sections that now read as orphans — and anything larger
-gets reported rather than done.
+The last step is a read-through by an agent with a clean context, **not by whoever did the
+rewrite.** By the end of it you understand the material too well to see what is missing, which is
+exactly the mechanism behind the "destroyed by understanding" rot. Its output is connective repair
+only — transitions, pointers that no longer resolve, sections that now read as orphans — and
+anything larger gets reported rather than done.
 
 **This is the ONLY legitimate reason to hand this work over.** "Running low on context" is not one:
 context is a compaction boundary, not a deadline, and both this file and `memory.md` survive
-compaction by construction, so a compacted original strictly dominates a replacement who would re-read
-the same documents without the summary and without any tacit judgement.
+compaction by construction, so a compacted original strictly dominates a replacement who would
+re-read the same documents without the summary and without any tacit judgement.
 
 ## Judgement calls that keep coming up
 
 - **`memory.md` has a RATE, not a size, so a line-count target is the wrong instrument.** Measured:
   sixteen sections dated one single day accounted for 1,784 of 7,617 lines, about 960 after being
   rewritten at compressed density — one heavy day produces more than a 1,000-line target would allow
-  the whole file to be. What holds is a trigger, not a number: regenerate when a region passes a size
-  you re-derive each pass. **A target makes you stop at the number, and what gets cut is whatever you
-  happened to be reading last rather than whatever least deserved to stay.**
+  the whole file to be. What holds is a trigger, not a number: regenerate when a region passes a
+  size you re-derive each pass. **A target makes you stop at the number, and what gets cut is
+  whatever you happened to be reading last rather than whatever least deserved to stay.**
 - **Batch labels are not subjects.** FIX-1…FIX-10, Task X, P3 — dissolve by subject and retitle;
   nobody searches for "P3". **Except when the batch IS the subject**: a dead-code sweep has no
   subject other than what was deleted, and grouping those by process is correct.
 - **Classify by conclusion, not by title.** "70K post-restart cache miss" is not a cache entry; its
   conclusion is that `response.model` cannot be trusted.
-- **Classify by who gets hurt.** The LLM facility's real warning is a duplication between two provider
-  files — that bites whoever edits providers, not a plugin author.
+- **Classify by who gets hurt.** The LLM facility's real warning is a duplication between two
+  provider files — that bites whoever edits providers, not a plugin author.
 - **Keep evolution chains together even when different people drove them.** Grouping by who drove it
   is grouping by history, which is the thing you are leaving behind.
-- **File a round's findings BY SUBJECT, not where the task lived.** A walker rewrite also produced two
-  lessons about mutation harnesses and one about how prose rots; filing all of it under the walker
-  buries the other two where only someone already reading about walkers will find them.
+- **File a round's findings BY SUBJECT, not where the task lived.** A walker rewrite also produced
+  two lessons about mutation harnesses and one about how prose rots; filing all of it under the
+  walker buries the other two where only someone already reading about walkers will find them.
 - **A deletion record deserves re-verification** — it is the entry most likely to have been quietly
   undone. Record the false positives you hit while checking, such as a deleted function still
   appearing in the comments that explain its deletion; that is a negative result and it stops the
@@ -278,8 +279,8 @@ the same documents without the summary and without any tacit judgement.
 - **When a region checks out clean, say so IN the file**, dated and scoped. Otherwise the next pass
   re-derives the same finding, which is exactly the cost this exercise exists to remove.
 - **Rot correlates with the gap between when a sentence was written and when the code under it last
-  moved**, not with the sentence's age. A region whose entries were written by the same tasks, in the
-  same sessions, as the code they describe can check out entirely clean while being the newest.
+  moved**, not with the sentence's age. A region whose entries were written by the same tasks, in
+  the same sessions, as the code they describe can check out entirely clean while being the newest.
 - **"If code can answer it, point at it" is too narrow — it is any AUTHORITATIVE SOURCE**, including
   another task's result round, a config value, an upstream doc.
 - **Understating a security surface is worse than overstating it.** An auth skip list was described
@@ -297,3 +298,66 @@ Two things, and the second is the more valuable:
 The enumeration is a **forcing function, not a document**: its value is realised while you write it.
 Budget for the write-up before you run out of room — a handoff written at the edge of exhaustion is
 exactly the artifact that most needed the care.
+
+## What the first whole-rewrite run taught
+
+Measured on the run that replaced the surgical route: **5394 -> 4225 lines, 64044 -> 49299 words**,
+one read in, one write out.
+
+**The acceptance instrument depends on which method produced the output, and reaching for the wrong
+one is the default.** The surgical era's probe was sentence identity — take high-information
+sentences from the input, ask whether each still appears — and under surgery that works, because
+surviving text is verbatim. **Under a rewrite every sentence is reworded, so the same probe reports
+~100% LOST and carries no information at all.** It fails loudly rather than silently, which is the
+one mercy; the real hazard is tuning it until it goes quiet.
+
+**Two probes, and neither finds what the other finds.**
+
+- **The token probe finds lost FACTS.** From the input pull every backticked identifier, every
+  number of three or more digits, every all-caps word, every CJK run; check presence in the output.
+  Yield on this run: **1347 / 145 / 519 / 22 candidates, ~190 flagged, 9 real losses.**
+- **The coverage probe finds lost SUBJECTS.** For each section of the input, name two or three
+  distinctive strings that must survive SOMEWHERE, and check the whole output — not the matching
+  heading, which a rewrite has usually renamed or dissolved. This run: **67 of 67 subjects clean**,
+  while the token probe was still finding real losses inside them.
+
+**Do not carry the surgical pass's accident-to-drop ratio across as a prior — it inverts.** There it
+was 9 accidents to 1 deliberate drop. Under a rewrite it is roughly 180 deliberate to 9 accidental,
+because dropping implementation detail is what the rewrite is FOR: test-file names that are not
+themselves the reference, mock names, model-name examples, SDK internals, reason-string constants
+whose rule survives. **So the work is adjudicating ~190 items to find 9, and the 9 do not stand
+out.** Budget for it, and write the deliberate drops into the commit message — an unexplained
+absence and a considered one are identical in a diff.
+
+**Match CJK fragments with whitespace stripped, not collapsed.** A CJK run has no spaces of its own,
+so the hard wrap breaks it mid-phrase and a flatten-to-single-space comparison misses it: 4 of this
+run's 5 CJK "misses" were wrap artifacts and one was real. Same class as the third-of-all-hits wrap
+false positives above, at 80% rather than 33%.
+
+**A mechanical re-wrap is provable, which is what makes it worth doing at the end.** Strip all
+whitespace from input and output and assert byte equality, then assert the counts of headings, table
+rows and code fences are unchanged. **The trap is that blockquote `>` prefixes MOVE under a
+re-wrap**, so a whitespace-only strip is not invariant and the assertion fires on a correct
+transform — normalise leading `>` away as well. Result here: 529 over-wide lines to 0, content
+proven identical.
+
+Three things about writing that re-wrapper, all of which cost a cycle:
+
+- **Its two rules fight.** *No continuation line may begin with `>`, `|`, `#`, `-` or `=`* is fixed
+  by pulling a word down from the previous line, which then makes that line overlong. Chasing both
+  in code loops; the cheap fix is to edit the TEXT so the offending token is not marker-initial
+  (`#14876` became `(#14876)`).
+- **A paragraph accumulator that stops at `#`-initial lines will split a paragraph at exactly the
+  defect you are hunting**, and it is content-preserving, so no assertion fires and the tool hides
+  the bug from itself.
+- Do not treat "near 100 columns" as satisfied by 105. Wrap to a hard bound and the check is binary.
+
+**After hoisting classes into a spine chapter, verify the pointers resolve.** Every `*Class name*`
+reference must match a real heading — 20 of 20 here. This is the only check that tests whether the
+hoist WORKED rather than whether text moved. **Do not try to extract the pointers with a regex over
+italics**: the file's emphasis style and its pointer style are the same syntax, so a naive sweep
+returned 457 candidates of which 8 were pointers. Check a named list you wrote deliberately.
+
+**And the probe is an instrument.** This run's coverage probe required ALL of a section's strings to
+be present when the intent was ANY, and reported one false loss — in a run whose entire subject was
+that a green report proves nothing about what was read.
