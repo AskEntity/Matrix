@@ -481,7 +481,7 @@ const searchTool = defineTool({
 	name: "search",
 	availability: "internal",
 	description:
-		'A powerful regex search tool. ALWAYS use this for search tasks — NEVER invoke grep or rg via bash. Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+"). The path parameter accepts a directory or a single file. Filter files with glob parameter (e.g., "*.ts", "*.{ts,tsx}"). Output modes: "content" (default) shows matching lines with line numbers, "files_with_matches" shows only file paths (fast discovery), "count" shows match counts per file.',
+		'A powerful regex search over file CONTENTS. ALWAYS use this to search files — NEVER invoke grep or rg via bash. It reads the code as it stands now, so it cannot answer why something is the way it is, whether it was already tried, or what was decided: `search_tasks` and `search_logs` cover the task tree and its conversations. When the question that sent you here was a "why" or a "has this been done already", search there too — not instead. Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+"). The path parameter accepts a directory or a single file. Filter files with glob parameter (e.g., "*.ts", "*.{ts,tsx}"). Output modes: "content" (default) shows matching lines with line numbers, "files_with_matches" shows only file paths (fast discovery), "count" shows match counts per file.',
 	params: {
 		...bindParams,
 		pattern: {
