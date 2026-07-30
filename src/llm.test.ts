@@ -365,19 +365,23 @@ describe("a shell credential cannot reach the API (facility)", () => {
 	 */
 	async function wireCall(authGroup: AnthropicAuthGroup): Promise<{
 		sent: Record<string, string>[];
+		hosts: string[];
 		error: unknown;
 	}> {
 		const original = globalThis.fetch;
 		const sent: Record<string, string>[] = [];
+		const hosts: string[] = [];
 		globalThis.fetch = (async (
 			input: RequestInfo | URL,
 			init?: RequestInit,
 		) => {
 			const headers: Record<string, string> = {};
-			new Request(input, init).headers.forEach((v, k) => {
+			const request = new Request(input, init);
+			request.headers.forEach((v, k) => {
 				if (k === "x-api-key" || k === "authorization") headers[k] = v;
 			});
 			sent.push(headers);
+			hosts.push(new URL(request.url).origin);
 			return new Response(
 				JSON.stringify({
 					type: "error",
@@ -392,6 +396,7 @@ describe("a shell credential cannot reach the API (facility)", () => {
 				{
 					ANTHROPIC_API_KEY: "sk-ant-shell-key-should-never-be-sent",
 					ANTHROPIC_AUTH_TOKEN: "shell-auth-token-should-never-be-sent",
+					ANTHROPIC_BASE_URL: "https://env-should-never-decide.example.com",
 				},
 				() => createLLM({ authGroup, model: "claude-sonnet-4-6" }),
 			);
@@ -401,7 +406,7 @@ describe("a shell credential cannot reach the API (facility)", () => {
 		} finally {
 			globalThis.fetch = original;
 		}
-		return { sent, error };
+		return { sent, hosts, error };
 	}
 
 	test("oauth group: the request carries only authorization", async () => {
@@ -418,6 +423,24 @@ describe("a shell credential cannot reach the API (facility)", () => {
 			apiKey: "configured-api-key",
 		});
 		expect(sent).toEqual([{ "x-api-key": "configured-api-key" }]);
+	});
+
+	test("the host is ours or the auth group's, never ANTHROPIC_BASE_URL's", async () => {
+		const unset = await wireCall({
+			provider: "anthropic",
+			apiKey: "configured-api-key",
+		});
+		expect(unset.hosts).toEqual(["https://api.anthropic.com"]);
+
+		// Positive control for the same reader: a configured host DOES show up
+		// here, so the assertion above is about where we sent it and not about a
+		// URL nobody read.
+		const configured = await wireCall({
+			provider: "anthropic",
+			apiKey: "configured-api-key",
+			baseUrl: "https://proxy.example.com",
+		});
+		expect(configured.hosts).toEqual(["https://proxy.example.com"]);
 	});
 
 	test("a credential-less group asks the caller for one instead of using the shell's", async () => {

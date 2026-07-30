@@ -5104,24 +5104,37 @@ describe("systemPreamble", () => {
 });
 
 // ── baseUrl tests ──
+//
+// ⚠️ Both of these pin ANTHROPIC_BASE_URL, and the second one NEEDS it: before
+// 2026-07-30 the SDK read that variable for an omitted `baseURL`, so "the default
+// applies" was true only on a machine whose shell did not set it. The test passed
+// for a reason that was a fact about the person running it.
 
 describe("baseUrl", () => {
 	test("baseUrl option is passed to the SDK client as baseURL", () => {
-		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
-			apiKey: "test-key",
-			baseUrl: "https://proxy.example.com",
-		});
-		// biome-ignore lint/suspicious/noExplicitAny: inspecting private client
-		const client = (provider as any).client as Anthropic;
+		const client = withClientEnv(
+			{ ANTHROPIC_BASE_URL: "https://env-should-never-decide.example.com" },
+			() =>
+				clientOf(
+					new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+						apiKey: "test-key",
+						baseUrl: "https://proxy.example.com",
+					}),
+				),
+		);
 		expect(client.baseURL).toBe("https://proxy.example.com");
 	});
 
-	test("without baseUrl: SDK default baseURL is used", () => {
-		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
-			apiKey: "test-key",
-		});
-		// biome-ignore lint/suspicious/noExplicitAny: inspecting private client
-		const client = (provider as any).client as Anthropic;
+	test("without baseUrl: WE choose api.anthropic.com — the environment cannot", () => {
+		const client = withClientEnv(
+			{ ANTHROPIC_BASE_URL: "https://env-should-never-decide.example.com" },
+			() =>
+				clientOf(
+					new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+						apiKey: "test-key",
+					}),
+				),
+		);
 		expect(client.baseURL).toBe("https://api.anthropic.com");
 	});
 });

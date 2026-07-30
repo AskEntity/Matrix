@@ -52,7 +52,7 @@ import {
 	type OpenAICredentialSource,
 	openAICredentialSource,
 } from "./codex-auth.ts";
-import type { AuthGroup } from "./config.ts";
+import { type AuthGroup, resolveAnthropicBaseUrl } from "./config.ts";
 import type { EventSpec } from "./events.ts";
 import { createOpenAIResponsesAdapter } from "./openai-responses-compatible-provider.ts";
 import type { ProviderAdapter } from "./provider-shared.ts";
@@ -426,9 +426,9 @@ function createAnthropicClient(authGroup: AuthGroup): {
 		"effort-2025-11-24",
 	];
 	const timeout = 60 * 60 * 1000;
-	// Base URL override → SDK baseURL. Undefined leaves the SDK default
-	// (api.anthropic.com, or ANTHROPIC_BASE_URL env) in place.
-	const baseURL = authGroup.baseUrl;
+	// Always explicit — an omitted `baseURL` is read from ANTHROPIC_BASE_URL by
+	// the SDK. See resolveAnthropicBaseUrl for the decision.
+	const baseURL = resolveAnthropicBaseUrl(authGroup.baseUrl);
 	// ⚠️ Every credential slot is named in every branch, unused one set to `null`.
 	// Same reason as the provider constructor, and the same rule applies here for
 	// the same reason it applies there: an `undefined` slot is read from env by
@@ -440,7 +440,7 @@ function createAnthropicClient(authGroup: AuthGroup): {
 				authToken: oauthToken,
 				apiKey: null,
 				timeout,
-				...(baseURL ? { baseURL } : {}),
+				baseURL,
 				defaultHeaders: {
 					"anthropic-beta": ["oauth-2025-04-20", ...betaFeatures].join(","),
 				},
@@ -454,7 +454,7 @@ function createAnthropicClient(authGroup: AuthGroup): {
 				apiKey,
 				authToken: null,
 				timeout,
-				...(baseURL ? { baseURL } : {}),
+				baseURL,
 				defaultHeaders: { "anthropic-beta": betaFeatures.join(",") },
 			}),
 			useOAuth: false,
@@ -469,7 +469,7 @@ function createAnthropicClient(authGroup: AuthGroup): {
 			apiKey: null,
 			authToken: null,
 			timeout,
-			...(baseURL ? { baseURL } : {}),
+			baseURL,
 			defaultHeaders: { "anthropic-beta": betaFeatures.join(",") },
 		}),
 		useOAuth: false,

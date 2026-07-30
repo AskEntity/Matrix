@@ -8,8 +8,45 @@ export interface AnthropicAuthGroup {
 	oauthToken?: string;
 	/** Prepended as the first system text block when non-empty. */
 	systemPreamble?: string;
-	/** API base URL override (SDK `baseURL`). When unset, the SDK default applies. */
+	/**
+	 * API base URL override (SDK `baseURL`). Unset means
+	 * `ANTHROPIC_DEFAULT_BASE_URL` — see `resolveAnthropicBaseUrl`, and note that
+	 * unset does NOT mean "whatever the environment says".
+	 */
 	baseUrl?: string;
+}
+
+/** The host an Anthropic auth group means when it does not name one. */
+export const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
+
+/**
+ * Where an Anthropic client's traffic goes: the auth group's `baseUrl`, or
+ * Anthropic's own host. Never the environment.
+ *
+ * ⭐ DECIDED 2026-07-30. `ANTHROPIC_BASE_URL` used to win here, and it won
+ * INVISIBLY: the SDK takes `baseURL` as a default parameter reading that
+ * variable, so omitting the option was the same as consenting to it. Endpoint
+ * choice therefore had two mechanisms — one typed, in Settings, in the CLI and in
+ * config.json; one ambient, undocumented, and silently authoritative whenever the
+ * typed one was unset. That is the duplicate-codepath shape with the extra
+ * property that the hidden path decides where our prompts and our code are sent.
+ * Delete until one remains, and the survivor is the one a user can see.
+ *
+ * The env var was never a chosen escape hatch: the string entered this repo
+ * yesterday (`cdad315a`), in a COMMENT, written by the commit that added
+ * `baseUrl` as a typed field — a description of the SDK's fallback, not a
+ * decision to keep it. Nothing documents it, no test sets it, and the real
+ * "point at another host" consumer (kimi) uses `baseUrl`. It also cannot reach an
+ * INSTALLED daemon at all: `daemonPlist()` forwards `PATH` and `HOME` and nothing
+ * else, so this only ever worked for a daemon started from an interactive
+ * shell — which is to say, for us while bootstrapping.
+ *
+ * `||` rather than `??` on purpose: `""` is how the global config layer spells
+ * "not chosen", and it is also exactly what the SDK's own `baseURL || default`
+ * did with an empty string, so this changes who decides and not what happens.
+ */
+export function resolveAnthropicBaseUrl(baseUrl?: string): string {
+	return baseUrl || ANTHROPIC_DEFAULT_BASE_URL;
 }
 
 /**

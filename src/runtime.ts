@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import {
 	DEFAULT_CONFIG,
 	loadGlobalConfig,
+	resolveAnthropicBaseUrl,
 	resolveAuthGroup,
 } from "./config.ts";
 import {
@@ -195,8 +196,12 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 			const oauthToken =
 				authGroup?.provider === "anthropic" ? authGroup.oauthToken : undefined;
 			const useOAuth = Boolean(oauthToken && !apiKey);
-			const baseURL =
-				authGroup?.provider === "anthropic" ? authGroup.baseUrl : undefined;
+			// Always explicit — an omitted `baseURL` is read from ANTHROPIC_BASE_URL
+			// by the SDK, so this button would check a host the environment picked.
+			// See resolveAnthropicBaseUrl for the decision.
+			const baseURL = resolveAnthropicBaseUrl(
+				authGroup?.provider === "anthropic" ? authGroup.baseUrl : undefined,
+			);
 
 			// ⚠️ Every credential slot named in every branch, unused one `null`. The
 			// third of the three sites that hand-build an Anthropic client, and the
@@ -212,7 +217,7 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 				client = new Anthropic({
 					authToken: oauthToken,
 					apiKey: null,
-					...(baseURL ? { baseURL } : {}),
+					baseURL,
 					defaultHeaders: {
 						"anthropic-beta": "oauth-2025-04-20",
 					},
@@ -221,7 +226,7 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 				client = new Anthropic({
 					apiKey,
 					authToken: null,
-					...(baseURL ? { baseURL } : {}),
+					baseURL,
 				});
 			} else {
 				// Nothing configured: the check reports an error naming the missing
@@ -229,7 +234,7 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 				client = new Anthropic({
 					apiKey: null,
 					authToken: null,
-					...(baseURL ? { baseURL } : {}),
+					baseURL,
 				});
 			}
 

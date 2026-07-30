@@ -5,6 +5,7 @@ import type {
 	Tool,
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
+import { resolveAnthropicBaseUrl } from "./config.ts";
 import { resolveContextWindow } from "./context-window.ts";
 import {
 	debugResponsePath,
@@ -926,9 +927,11 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		this.systemPreamble = opts.systemPreamble;
 		// 1 hour timeout — compaction with very large contexts under API load can be slow
 		const timeout = 60 * 60 * 1000;
-		// Base URL override → SDK baseURL. Undefined leaves the SDK default
-		// (api.anthropic.com, or ANTHROPIC_BASE_URL env) in place.
-		const baseURL = opts.baseUrl;
+		// Always explicit, never omitted: the SDK reads ANTHROPIC_BASE_URL for a
+		// `baseURL` we leave out, so where our traffic goes was decided by the
+		// environment whenever the auth group did not name a host. See
+		// resolveAnthropicBaseUrl for the decision.
+		const baseURL = resolveAnthropicBaseUrl(opts.baseUrl);
 		const betaFeatures = [
 			"interleaved-thinking-2025-05-14",
 			"context-management-2025-06-27",
@@ -951,7 +954,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				authToken: oauthToken,
 				apiKey: null,
 				timeout,
-				...(baseURL ? { baseURL } : {}),
+				baseURL,
 				defaultHeaders: {
 					"anthropic-beta": ["oauth-2025-04-20", ...betaFeatures].join(","),
 				},
@@ -961,7 +964,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				apiKey,
 				authToken: null,
 				timeout,
-				...(baseURL ? { baseURL } : {}),
+				baseURL,
 				defaultHeaders: {
 					"anthropic-beta": betaFeatures.join(","),
 				},
@@ -974,7 +977,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				apiKey: null,
 				authToken: null,
 				timeout,
-				...(baseURL ? { baseURL } : {}),
+				baseURL,
 				defaultHeaders: {
 					"anthropic-beta": betaFeatures.join(","),
 				},

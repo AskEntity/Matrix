@@ -237,15 +237,18 @@ describe("daemon health", () => {
 
 		const original = globalThis.fetch;
 		const sent: Record<string, string>[] = [];
+		const hosts: string[] = [];
 		globalThis.fetch = (async (
 			input: RequestInfo | URL,
 			init?: RequestInit,
 		) => {
 			const headers: Record<string, string> = {};
-			new Request(input, init).headers.forEach((v, k) => {
+			const request = new Request(input, init);
+			request.headers.forEach((v, k) => {
 				if (k === "x-api-key" || k === "authorization") headers[k] = v;
 			});
 			sent.push(headers);
+			hosts.push(new URL(request.url).origin);
 			return new Response(
 				JSON.stringify({
 					type: "error",
@@ -256,7 +259,10 @@ describe("daemon health", () => {
 		}) as typeof globalThis.fetch;
 		try {
 			await withClientEnv(
-				{ ANTHROPIC_API_KEY: "sk-ant-shell-key-should-never-be-sent" },
+				{
+					ANTHROPIC_API_KEY: "sk-ant-shell-key-should-never-be-sent",
+					ANTHROPIC_BASE_URL: "https://env-should-never-decide.example.com",
+				},
 				() => app.request("/health?check_model=true"),
 			);
 		} finally {
@@ -264,6 +270,9 @@ describe("daemon health", () => {
 		}
 
 		expect(sent).toEqual([{ authorization: "Bearer configured-oauth-token" }]);
+		// And it checked the host we chose, not the one the shell named — a check
+		// against the wrong endpoint answers a question nobody asked.
+		expect(hosts).toEqual(["https://api.anthropic.com"]);
 
 		await rm(dataDir, { recursive: true, force: true });
 	});

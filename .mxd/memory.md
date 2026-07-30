@@ -4376,3 +4376,44 @@ passes `apiKey` (a required `string`) and always passes `baseURL`, so neither th
 destination can come from env. What does: `organization` and `project` are never passed, so
 `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID` become `OpenAI-Organization` / `OpenAI-Project` headers on
 every request — env deciding a request attribute nobody configured.
+
+### DECIDED 2026-07-30: `ANTHROPIC_BASE_URL` stops working — the host is chosen, like the model
+
+**The endpoint had TWO mechanisms and the invisible one won by default.** `authGroup.baseUrl` is
+typed, in Settings, in the CLI and in `config.json`; `ANTHROPIC_BASE_URL` is ambient, undocumented,
+and was silently authoritative *whenever the typed one was unset* — because the SDK takes `baseURL`
+as a default parameter reading that variable, so **omitting the option was the same as consenting to
+it.** Duplicate codepaths, with the extra property that the hidden one decides where our prompts and
+our code are sent. `resolveAnthropicBaseUrl` in `src/config.ts` is now the one place that answers
+it, called by all three client sites.
+
+**It was never a chosen escape hatch, and the archaeology is unusually clean: the string entered
+this repo YESTERDAY, in a comment, in the commit that added the typed field** (`cdad315a`, which
+wired `baseUrl` at all three sites, with a UI field, an i18n key, a CLI flag and two-sided tests).
+That comment described the SDK's fallback in the unset case; it never said the fallback was wanted.
+⭐ **A comment that documents a behaviour without endorsing it is exactly how an accident survives
+review** — it reads as "considered", and nothing distinguishes it from "decided".
+
+⚠️ **MEASURED, and it bounds this whole family: none of these variables can reach an INSTALLED
+daemon.** `daemonPlist()` forwards `PATH` and `HOME` and nothing else, so every env-decides-the-
+credential/host effect in this region only ever applied to a daemon started from an interactive
+shell. That is not a reason to relax — **it is precisely the bootstrap path, i.e. us, every day** —
+but state it that way round rather than as "any user with the variable exported".
+
+**The test that had to change is the tell, and it changed for a reason nobody would have guessed
+from reading it.** `"without baseUrl: SDK default baseURL is used"` asserted
+`client.baseURL === "https://api.anthropic.com"` and passed — on a machine whose shell did not set
+`ANTHROPIC_BASE_URL`. Same shape as the credential fixtures: **its greenness was a fact about the
+person running it.** Both baseUrl tests now pin the variable, and the unset one is renamed to say
+who chooses.
+
+**Behaviourally identical, deliberately: the SDK's own default is
+`baseURL || 'https://api.anthropic.com'`**, so passing that string changes *who decides* and not
+*what happens*. One SDK side effect, checked
+rather than assumed: an explicit `baseURL` sets the client's internal `_baseURLIsExplicit`, which
+only governs whether a `profile` credential may supply a host — and we never pass `profile`.
+
+⚠️ **Remaining env reader, out of product scope but worth knowing before you trust it:
+`scripts/probe-hidden-tool.ts` builds its own client with no `baseURL`.** So a shell variable can
+silently redirect the probe we use to measure what the API does — *your instrument is a claim* in
+the one place that costs a wrong measurement rather than a wrong request.
