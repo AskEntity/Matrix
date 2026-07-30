@@ -2133,7 +2133,7 @@ editing one field deletes a field a NEWER matrix wrote, as an ordinary commit �
 answer is that this is a missing-versioning problem, not a loader problem** (*"现在我们并没有 proper
 的 versioning…以后有 versioning 之后,自然而然的 如果你读到新版本 应该说让你去更新"*) — reading a
 config a NEWER matrix wrote should tell you to upgrade, not absorb it silently. Filed as
-`01KYR23QK9E4CJDD7XKV8Q1CE5`. And **look a classification table up through a `Map`, never property
+`01KYR25PSVP33F6MF858VHG0R6`. And **look a classification table up through a `Map`, never property
 access on the object literal**: `TABLE["__proto__"]` answers with `Object.prototype`, which is
 TRUTHY, and `JSON.parse` yields `__proto__` as an OWN key, so a key that passes the check is then
 ASSIGNED to the result object where `__proto__` is a setter. Found by a test asserting the refusal's
@@ -2402,7 +2402,7 @@ against the detailed form too.
 parses is not JSON**, and that line was authored, run green, and re-read during a mutation pass
 without anyone asking why the surgery was there. No other test caught the real break either, because
 every fixture parsing `get_tree` output happened to contain no closed tasks: *a fixture that cannot
-express the difference*, one row over.
+express the difference*.
 
 ## Images
 
@@ -3634,11 +3634,11 @@ Four shapes mutation testing cannot see, each with a different cause. **A transi
 never written**: a missing `setActivity` survived a full clean sweep, because nothing existed to
 remove; it was caught by reading the comment that argued for its absence. **When a comment argues
 why some code is unnecessary, that argument is the thing to check; the tests around it are all
-consistent with it by construction.** The other three are the fixture failures above and **two
-implementations of the same guarantee covering for each other** — the tell is a mutation surviving
-that obviously should not have: `walkFiles` sorted its output and then the caller sorted the same
-array again, so deleting the sort inside the walk failed no test at all. **Deleting the redundant
-one is what made the survivor testable.**
+consistent with it by construction.** The other three are the fixture failures in *A fixture that
+cannot express the difference* and **two implementations of the same guarantee covering for each
+other** — the tell is a mutation surviving that obviously should not have: `walkFiles` sorted its
+output and then the caller sorted the same array again, so deleting the sort inside the walk failed
+no test at all. **Deleting the redundant one is what made the survivor testable.**
 
 **`SURVIVED` is the comfortable answer, so it is the one to distrust.** A harness must refuse to
 print a verdict unless the file text actually changed AND bun printed a summary line. **`git
@@ -3917,12 +3917,11 @@ count the truncation is obvious; with it you believe you have enumerated.
 cleanup staged 12 deletions, stashed and popped for an unrelated comparison, then `git add`-ed two
 config files and committed: `stash pop` returns everything as **unstaged** unless you pass
 `--index`, so the narrow `git add` was the whole index and the commit contained 2 files while its
-message described
-14. **What makes it a member of the gate family rather than a git tip: the hook passed, and passing
-    was CORRECT** — the deleted files were still on disk, so nothing was broken. **A green gate is
-    consistent with a commit that did the opposite of what it says**, and nothing in this repo
-    compares a commit's message against its diff. **After any commit whose message makes a claim
-    about scope, run `git show --stat` and confirm the file count.**
+message described 14. **What makes it a member of the gate family rather than a git tip: the hook
+passed, and passing was CORRECT** — the deleted files were still on disk, so nothing was broken. **A
+green gate is consistent with a commit that did the opposite of what it says**, and nothing in this
+repo compares a commit's message against its diff. **After any commit whose message makes a claim
+about scope, run `git show --stat` and confirm the file count.**
 
 ## Which probes get committed
 
