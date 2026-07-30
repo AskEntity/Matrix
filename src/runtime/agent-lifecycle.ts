@@ -274,8 +274,8 @@ export interface RunChildCoreParams {
  *
  * Called by `runAgentForNode` for every non-root node; root agents stream the
  * provider directly, so this wrapper IS the non-root half of that one branch.
- * Both ways a child gets launched — MCP `send_message` and the REST message
- * endpoint — arrive here through the single `deliverMessage` path.
+ * Nothing else calls it — a child launched by a message, by a restart resume or
+ * by a reactivation all converge on `runAgentForNode` first.
  *
  * Done detection: done() is an intended orphan — the provider loop detects it
  * and exits immediately (no tool_result emitted). The generator finishes with
