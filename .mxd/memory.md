@@ -4065,3 +4065,13 @@ instead of the action.**
 **Do NOT add a test asserting `----------` still works.** It passes without the flag too, so it
 cannot express the difference — the only discriminating shape is a line of exactly `---` or
 `--- text`.
+
+⚠️ **The sibling failure, where the instrument WORKED and only its CAPTION lied.** The commit-trailer
+audit counted correctly and printed its bucket as `(pre-migration)` — a *cause* the scan never
+tested, and already false when written, since that bucket also holds every clean `--no-ff` merge
+root makes on main (no hook runs there). Nothing caught it until root's own merge moved the number
+seconds after the file landed. ⭐ **A counting instrument can be right in its number and lying in
+its label, and the label is the part nobody audits** — the number gets checked because someone
+wanted it, the caption is read as decoration. Let a bucket claim only its own predicate ("no
+`Task-Id:` line in the message") and describe what happens to be in it separately. **Distinct from
+the grep failure above: there the instrument never worked; here it always did.**
