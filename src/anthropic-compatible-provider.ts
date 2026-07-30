@@ -937,52 +937,54 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			"context-management-2025-06-27",
 			"effort-2025-11-24",
 		];
-		// ⚠️ Every credential slot is named in every branch, and the unused one is
-		// `null` rather than left out. The SDK reads env for a slot that is
-		// `undefined` — `if (apiKey === undefined) apiKey = readEnv(…)` — and
-		// `null` is its own documented way to say "do not look in the
-		// environment" (signature: `string | null | undefined`). Omitting the slot
-		// is the same as `undefined`, so there is no shorter spelling of this.
+		// ⚠️ ONE literal, naming EVERY credential slot, because the SDK reads env
+		// for any slot left `undefined` — `if (apiKey === undefined) apiKey =
+		// readEnv('ANTHROPIC_API_KEY')` — and omitting a slot is the same as
+		// `undefined`. `null` is the SDK's own documented way to say "do not look
+		// in the environment" (its signature is `string | null | undefined`).
 		//
 		// It is not merely that env would outrank config: authHeaders() emits one
 		// header per filled slot, and the API REJECTS a request carrying both
-		// `x-api-key` and `authorization`. A shell that holds ANTHROPIC_API_KEY
-		// for some other project used to break the OAuth path outright, with an
-		// error that pointed at the OAuth token.
-		if (this.useOAuth) {
-			this.client = new Anthropic({
-				authToken: oauthToken,
-				apiKey: null,
-				timeout,
-				baseURL,
-				defaultHeaders: {
-					"anthropic-beta": ["oauth-2025-04-20", ...betaFeatures].join(","),
-				},
-			});
-		} else if (apiKey) {
-			this.client = new Anthropic({
-				apiKey,
-				authToken: null,
-				timeout,
-				baseURL,
-				defaultHeaders: {
-					"anthropic-beta": betaFeatures.join(","),
-				},
-			});
-		} else {
-			// No credential configured. The client holds none, so the SDK throws
-			// "Could not resolve authentication method…" on the first request —
-			// deliberately, instead of quietly running on whatever the shell holds.
-			this.client = new Anthropic({
-				apiKey: null,
-				authToken: null,
-				timeout,
-				baseURL,
-				defaultHeaders: {
-					"anthropic-beta": betaFeatures.join(","),
-				},
-			});
-		}
+		// `x-api-key` and `authorization`. A shell holding ANTHROPIC_API_KEY for
+		// some other project used to break the OAuth path outright, with an error
+		// that pointed at the OAuth token.
+		//
+		// ⭐ It is one literal rather than three branches so that forgetting a slot
+		// is UNREPRESENTABLE rather than merely absent: with a branch per case, the
+		// fourth branch somebody adds next year reopens the hole and nothing goes
+		// red. Same move as `OpenAICredentialSource` becoming a function type so
+		// holding a token is not expressible.
+		//
+		// `|| null` and not `?? null`, for a type reason and a measured one.
+		//
+		// The type reason is the load-bearing one: both locals are `string |
+		// undefined`, and `undefined` in a slot is exactly what sends the SDK to
+		// env. `|| null` (or `??`) is what keeps that impossible.
+		//
+		// ⚠️ MEASURED, because the obvious justification for `||` is FALSE and I
+		// wrote it down before checking. The two slots do NOT treat `""` alike:
+		//   apiKey: ""     → authHeaders builds `x-api-key: ""`, and then
+		//                    validateHeaders REFUSES — no request, same error as
+		//                    `null`. So for this slot `||` and `??` are equivalent.
+		//   authToken: ""  → `Authorization: Bearer` with nothing after it, and the
+		//                    request IS SENT. Malformed rather than unauthenticated.
+		// `useOAuth = Boolean(oauthToken && !apiKey)` is what makes the dangerous
+		// one unreachable: an empty `oauthToken` never enters the OAuth arm. Keep
+		// `||` because it classifies `""` as "none" the way the old
+		// `else if (apiKey)` did, and do not "simplify" the useOAuth guard without
+		// re-reading this.
+		this.client = new Anthropic({
+			apiKey: this.useOAuth ? null : apiKey || null,
+			authToken: this.useOAuth ? oauthToken || null : null,
+			timeout,
+			baseURL,
+			defaultHeaders: {
+				"anthropic-beta": (this.useOAuth
+					? ["oauth-2025-04-20", ...betaFeatures]
+					: betaFeatures
+				).join(","),
+			},
+		});
 		this.model = model;
 		this.thinkingEffort = opts.thinkingEffort;
 	}

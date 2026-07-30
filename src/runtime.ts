@@ -212,31 +212,18 @@ export function createApp(config: RuntimeConfig) {
 			// `x-api-key` and `authorization`, which the API rejects — so a shell
 			// key used to make this button report that the configured OAuth token
 			// was bad. See anthropic-compatible-provider.ts's constructor.
-			let client: Anthropic;
-			if (useOAuth) {
-				client = new Anthropic({
-					authToken: oauthToken,
-					apiKey: null,
-					baseURL,
-					defaultHeaders: {
-						"anthropic-beta": "oauth-2025-04-20",
-					},
-				});
-			} else if (apiKey) {
-				client = new Anthropic({
-					apiKey,
-					authToken: null,
-					baseURL,
-				});
-			} else {
-				// Nothing configured: the check reports an error naming the missing
-				// credential, rather than silently testing the shell's.
-				client = new Anthropic({
-					apiKey: null,
-					authToken: null,
-					baseURL,
-				});
-			}
+			// Nothing configured means the client holds nothing, so the check reports
+			// an error naming the missing credential instead of silently testing the
+			// shell's. `defaultHeaders` keeps a conditional because a header map is
+			// not a slot env can fill; the credential slots do not.
+			const client = new Anthropic({
+				apiKey: useOAuth ? null : apiKey || null,
+				authToken: useOAuth ? oauthToken || null : null,
+				baseURL,
+				...(useOAuth
+					? { defaultHeaders: { "anthropic-beta": "oauth-2025-04-20" } }
+					: {}),
+			});
 
 			const preamble =
 				authGroup?.provider === "anthropic"

@@ -391,6 +391,30 @@ describe("env cannot decide the endpoint or the credential (receiver-side)", () 
 		expect(wire(target, decoy)).toEqual({ target: [], decoy: [] });
 	});
 
+	/**
+	 * An EMPTY credential is "none", not a credential of length zero.
+	 *
+	 * `""` is reachable: it is what a hand-edited `config.json` holds after someone
+	 * clears the field, and it is how the global config layer spells "not chosen".
+	 *
+	 * ⚠️ This test does NOT distinguish `apiKey || null` from `apiKey ?? null`, and
+	 * the reason is worth more than the test. I wrote it believing it would — that
+	 * `??` would put `""` in the slot and send `x-api-key: ""` — and the mutation
+	 * SURVIVED. Measured: the SDK builds that header and then `validateHeaders`
+	 * refuses anyway, so `""` and `null` are the same outcome for that slot and the
+	 * mutant is equivalent rather than uncaught. The asymmetry is on the OTHER slot:
+	 * `authToken: ""` emits `Authorization: Bearer` with nothing after it and the
+	 * request IS sent. Unreachable through our code — `useOAuth` requires a truthy
+	 * oauthToken — which is why this asserts the guarantee that IS ours rather than
+	 * pinning the SDK's behaviour.
+	 */
+	test("an empty-string credential is none, not an empty credential", async () => {
+		reset();
+		const error = await facilityCall({ apiKey: "", baseUrl: target.url });
+		expect(String(error)).toContain("Could not resolve authentication method");
+		expect(wire(target, decoy)).toEqual({ target: [], decoy: [] });
+	});
+
 	// ── Door 3: OpenAI ──
 
 	test("streamResponsesAPI: no org, no project, no shell key, no shell host", async () => {

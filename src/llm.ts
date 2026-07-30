@@ -429,50 +429,34 @@ function createAnthropicClient(authGroup: AuthGroup): {
 	// Always explicit — an omitted `baseURL` is read from ANTHROPIC_BASE_URL by
 	// the SDK. See resolveAnthropicBaseUrl for the decision.
 	const baseURL = resolveAnthropicBaseUrl(authGroup.baseUrl);
-	// ⚠️ Every credential slot is named in every branch, unused one set to `null`.
-	// Same reason as the provider constructor, and the same rule applies here for
-	// the same reason it applies there: an `undefined` slot is read from env by
-	// the SDK, and a client carrying both `x-api-key` and `authorization` is
-	// REJECTED by the API. See anthropic-compatible-provider.ts's constructor.
-	if (useOAuth) {
-		return {
-			client: new Anthropic({
-				authToken: oauthToken,
-				apiKey: null,
-				timeout,
-				baseURL,
-				defaultHeaders: {
-					"anthropic-beta": ["oauth-2025-04-20", ...betaFeatures].join(","),
-				},
-			}),
-			useOAuth: true,
-		};
-	}
-	if (apiKey) {
-		return {
-			client: new Anthropic({
-				apiKey,
-				authToken: null,
-				timeout,
-				baseURL,
-				defaultHeaders: { "anthropic-beta": betaFeatures.join(",") },
-			}),
-			useOAuth: false,
-		};
-	}
-	// No credential in the auth group. The client holds none, so the SDK throws
-	// "Could not resolve authentication method…" at call time — which surfaces to
-	// the plugin as an error naming what is missing, instead of the call quietly
-	// succeeding on a credential the user never configured.
+	// ⚠️ ONE literal naming every credential slot, unused one `null` — the same
+	// shape and the same reasons as the provider constructor, which spells them
+	// out. Short version: an `undefined` slot is read from env by the SDK, a client
+	// carrying both `x-api-key` and `authorization` is REJECTED by the API, and one
+	// literal makes a forgotten slot unrepresentable instead of merely absent.
+	//
+	// With no credential in the auth group the client holds none, so the SDK throws
+	// "Could not resolve authentication method…" at call time — which reaches the
+	// plugin as an error naming what is missing, rather than a call that quietly
+	// succeeds on a credential the user never configured.
+	//
+	// `|| null` keeps `undefined` — the value that sends the SDK to env — out of
+	// both slots. The provider constructor carries the measurement behind that
+	// choice, including why `""` is not symmetric between the two.
 	return {
 		client: new Anthropic({
-			apiKey: null,
-			authToken: null,
+			apiKey: useOAuth ? null : apiKey || null,
+			authToken: useOAuth ? oauthToken || null : null,
 			timeout,
 			baseURL,
-			defaultHeaders: { "anthropic-beta": betaFeatures.join(",") },
+			defaultHeaders: {
+				"anthropic-beta": (useOAuth
+					? ["oauth-2025-04-20", ...betaFeatures]
+					: betaFeatures
+				).join(","),
+			},
 		}),
-		useOAuth: false,
+		useOAuth,
 	};
 }
 

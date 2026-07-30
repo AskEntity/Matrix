@@ -4668,3 +4668,41 @@ nothing, because the client reads the real shell and the fixture reports no leak
 found it from a failure, because there would not have been one. `withClientEnv` now defers its
 restore when the callback returns a promise, and `src/test-utils/sdk-client-env.test.ts` exists
 because **a fixture is an instrument, and an instrument is a claim until you have made it fail.**
+
+### One literal per client, so a forgotten credential slot is unrepresentable
+
+**The three-branch fix left the omission POSSIBLE and merely absent** — a fourth branch added next
+year reopens it and nothing goes red. All three sites now build their client from **one object
+literal** naming every credential slot, with `useOAuth` choosing which one is `null`. Same move as
+`OpenAICredentialSource` becoming a function type so holding a token is not expressible, and
+`getContextWindow` returning `Promise<number>` so a local guess is not expressible.
+
+⚠️ **`|| null`, and the type reason is the load-bearing one:** both locals are `string | undefined`,
+and `undefined` in a slot is precisely what sends the SDK to env, so the coalesce is what keeps the
+hole closed rather than a nicety.
+
+⭐ **MEASURED, and it refutes the justification I wrote first: the two slots do NOT treat `""`
+alike.**
+
+| passed | authHeaders builds | request sent? |
+|---|---|---|
+| `apiKey: null` | nothing | no — SDK refuses |
+| `apiKey: ""` | `x-api-key: ""` | **no** — `validateHeaders` refuses anyway |
+| `authToken: ""` | `Authorization: Bearer` | **YES — malformed, and it goes out** |
+
+So for `apiKey`, `||` and `??` are indistinguishable, which is why that mutation **SURVIVED** — an
+equivalent mutant, not a coverage gap. The dangerous slot is the other one, and
+`useOAuth = Boolean(oauthToken && !apiKey)` is the whole reason `authToken: ""` is unreachable. **Do
+not "simplify" that guard without re-reading this.**
+
+⚠️ **The transferable half is the order in which I got it wrong: I wrote the justification into a
+comment, then wrote a test to pin it, and only the MUTATION said the claim was false.** The test
+passed against both spellings — *a fixture that cannot express the difference* — and the comment
+read as measured because it was specific. **A comment stating a behaviour is not evidence of it,
+including when you are the one who just wrote it.** Same failure as the `indeterminate` comment
+describing a control that was never built, one day later, in my own diff.
+
+⚠️ **A test that would distinguish them was considered and REJECTED**: it would have to construct
+the SDK directly with `authToken: ""`, which pins the SDK's behaviour rather than ours. The
+empty-string test that stayed asserts the guarantee that IS ours — a cleared credential field in
+config produces "no credential" — and its docstring says plainly that it does not catch the `||`.
