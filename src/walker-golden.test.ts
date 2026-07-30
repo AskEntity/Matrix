@@ -301,7 +301,7 @@ describe("walker: onAssistantContent callback", () => {
 	// Legacy alias tests removed — TOOL_NAME_ALIASES deleted, no remapping exists.
 
 	test("unknown tool name passes through unchanged", () => {
-		// Non-aliased names flow through resolveToolName unchanged.
+		// Tool names reach the message verbatim — nothing rewrites them.
 		const events: Event[] = [
 			toolCallEvent("tool_06", "mcp__external__some_tool", { x: 1 }),
 		];

@@ -1935,7 +1935,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 
 	test("Anthropic: yield/done tool_result with structured body events from JSONL", () => {
 		// This simulates what JSONL looks like after yield/done tool execution:
-		// 1. user_message events written by waitForQueueMessages
+		// 1. message events written by deliverMessage while the agent was parked
 		// 2. tool_result with pure content (yield result text)
 		// 3. messages_consumed written by provider
 		const events: Event[] = [
@@ -1955,7 +1955,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				taskId: "test",
 				ts: 1002,
 			},
-			// Written by waitForQueueMessages to JSONL
+			// Written to JSONL by deliverMessage while the agent was parked
 			{
 				type: "message",
 				id: "msg-child-done",

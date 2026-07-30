@@ -108,8 +108,9 @@ const manifest: PluginManifest = {
 	// special case from when matrix was the only plugin. With the "matrix is
 	// just a plugin" framing, its runtime data (tree.json, tasks/, debug/)
 	// lives in its own namespace alongside any future plugin.
-	// Pre-existing data is moved into this layout by
-	// `migrateToPluginNamespace` at daemon startup — one-shot, idempotent.
+	// The one-shot migration that moved pre-existing data into this layout ran
+	// on disk and was then deleted (acb887d2). Nothing converts an old-layout
+	// data dir at startup today.
 	dataRoot: "@/plugin/matrix",
 	web: "./web/Plugin.tsx",
 	runtime: "./runtime.ts",
