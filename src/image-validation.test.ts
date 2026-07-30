@@ -37,7 +37,7 @@ const anthropicAdapter: ProviderAdapter = {
 		return { ok: true as const };
 	},
 	// Stubs for required interface methods — not used in filter tests
-	getContextWindow: () => 200000,
+	getContextWindow: async () => 200000,
 	getModelPricing: () => ({ inputPer1M: 0, outputPer1M: 0 }),
 	convertEventsToMessages: () => [],
 	prepareTools: () => [],

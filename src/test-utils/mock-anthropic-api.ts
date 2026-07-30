@@ -915,7 +915,91 @@ export interface AllowedToolError {
 
 // ── ValidatingMockAPI class ──
 
+/** Base URL this mock endpoint answers as. Only ever seen in error text. */
+export const MOCK_ENDPOINT = "https://mock.anthropic.test";
+
+/** One entry of a `GET /v1/models` response, in Anthropic's dialect. */
+export interface MockModelEntry {
+	id: string;
+	type: "model";
+	max_input_tokens: number;
+}
+
+/**
+ * What the mock endpoint answers to `GET /v1/models`, copied from the real
+ * response measured 2026-07-29 (`max_input_tokens`, the same key production
+ * reads).
+ *
+ * ⚠️ It has to answer something, because production no longer has any other
+ * source for a context window — `src/context-window.ts` deleted the local
+ * table, the substring guess and the default constant, so the endpoint is the
+ * only one left. That makes this list part of the harness's faithfulness: a
+ * model absent from it THROWS here exactly as it would in production, which is
+ * the behaviour we want testable rather than papered over. Tests that need a
+ * different deployment assign `mockAPI.modelCatalogue` — including `[]`, for
+ * "this endpoint lists nothing".
+ */
+export const MEASURED_ANTHROPIC_CATALOGUE: readonly MockModelEntry[] = [
+	{ id: "claude-opus-5", type: "model", max_input_tokens: 1_000_000 },
+	{ id: "claude-sonnet-5", type: "model", max_input_tokens: 1_000_000 },
+	{ id: "claude-fable-5", type: "model", max_input_tokens: 1_000_000 },
+	{ id: "claude-opus-4-8", type: "model", max_input_tokens: 1_000_000 },
+	{ id: "claude-opus-4-7", type: "model", max_input_tokens: 1_000_000 },
+	{ id: "claude-sonnet-4-6", type: "model", max_input_tokens: 1_000_000 },
+	{ id: "claude-opus-4-6", type: "model", max_input_tokens: 1_000_000 },
+	{
+		id: "claude-opus-4-5-20251101",
+		type: "model",
+		max_input_tokens: 200_000,
+	},
+	{
+		id: "claude-haiku-4-5-20251001",
+		type: "model",
+		max_input_tokens: 200_000,
+	},
+	{
+		id: "claude-sonnet-4-5-20250929",
+		type: "model",
+		max_input_tokens: 1_000_000,
+	},
+	{
+		id: "claude-opus-4-1-20250805",
+		type: "model",
+		max_input_tokens: 200_000,
+	},
+];
+
+/**
+ * A stand-in for the Anthropic SDK client, for tests that supply their own
+ * `messages.stream` instead of a whole ValidatingMockAPI.
+ *
+ * ⚠️ It has to answer `models.list` as well as `messages.stream`. The provider
+ * loop asks the endpoint for its context window before the first API call and
+ * throws when nobody answers, because `src/context-window.ts` removed every
+ * local source for that number. Four hand-written copies of this stub existed
+ * inline before that change — four places to have missed one — which is the
+ * reason it is a function now.
+ */
+export function createMockAnthropicClient(
+	messages: Record<string, unknown>,
+	catalogue: readonly MockModelEntry[] = MEASURED_ANTHROPIC_CATALOGUE,
+): Record<string, unknown> {
+	return {
+		baseURL: MOCK_ENDPOINT,
+		models: { list: async () => ({ data: catalogue }) },
+		messages: {
+			countTokens: async () => ({ input_tokens: 100 }),
+			...messages,
+		},
+	};
+}
+
 export class ValidatingMockAPI {
+	/**
+	 * The model list this mock endpoint serves. Replace it to change what the
+	 * deployment offers — see MEASURED_ANTHROPIC_CATALOGUE for why it exists.
+	 */
+	modelCatalogue: readonly MockModelEntry[] = MEASURED_ANTHROPIC_CATALOGUE;
 	private requestHistory: RequestRecord[] = [];
 	/**
 	 * Per-conversation turn queues. Keyed by conversation ID (derived from first user message).
@@ -1940,6 +2024,10 @@ export function createMockedProviderWithMock(
 	// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
 	const mockClient: any = {
 		_currentSessionId: undefined as string | undefined,
+		baseURL: MOCK_ENDPOINT,
+		models: {
+			list: async () => ({ data: mockAPI.modelCatalogue }),
+		},
 		messages: {
 			stream: (
 				params: Parameters<typeof mockAPI.createStream>[0],

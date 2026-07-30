@@ -31,6 +31,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { TEST_CONFIG } from "./test-utils.ts";
 import type { TaskNode } from "./types.ts";
 import { ulid } from "./ulid.ts";
 
@@ -87,6 +88,7 @@ async function setupTestContext(): Promise<TestContext> {
 
 	const project = { id: ulid(), name: basename(projectDir), path: projectDir };
 	const appResult = createApp({
+		initialConfig: TEST_CONFIG,
 		dataDir,
 		agentProvider: provider,
 		projects: [project],
@@ -787,6 +789,7 @@ async function recreateApp(
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedProviderWithMock(ctx.mockAPI);
 	const newApp = createApp({
+		initialConfig: TEST_CONFIG,
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
 		projects: [
@@ -9243,6 +9246,7 @@ describe("Default branch", () => {
 			path: projectDir,
 		};
 		const appResult = createApp({
+			initialConfig: TEST_CONFIG,
 			dataDir,
 			agentProvider: provider,
 			projects: [project],
@@ -9303,6 +9307,7 @@ describe("Default branch", () => {
 			path: projectDir,
 		};
 		const appResult = createApp({
+			initialConfig: TEST_CONFIG,
 			dataDir,
 			agentProvider: provider,
 			projects: [project],

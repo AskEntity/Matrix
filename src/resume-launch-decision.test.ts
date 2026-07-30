@@ -39,10 +39,12 @@ import {
 } from "./test-utils/emission-harness.ts";
 import { matrixBuildScopeOpts } from "./test-utils/matrix-scope.ts";
 import { createMockedProviderWithMock } from "./test-utils/mock-anthropic-api.ts";
+import { TEST_CONFIG } from "./test-utils.ts";
 
 /** Rebuild the app over the same dataDir — a daemon restart. */
 function recreateApp(ctx: EmissionTestContext): ReturnType<typeof createApp> {
 	const app = createApp({
+		initialConfig: TEST_CONFIG,
 		dataDir: ctx.dataDir,
 		agentProvider: createMockedProviderWithMock(ctx.mockAPI),
 		projects: [

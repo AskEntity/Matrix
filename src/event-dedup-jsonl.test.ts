@@ -36,6 +36,7 @@ import {
 	waitForIdle,
 } from "./test-utils/emission-harness.ts";
 import { createMockedProviderWithMock } from "./test-utils/mock-anthropic-api.ts";
+import { TEST_CONFIG } from "./test-utils.ts";
 
 async function assertMessageAppearsOnce(
 	ctx: EmissionTestContext,
@@ -242,6 +243,7 @@ describe("Bug 1: dedup across restarts (replay path)", () => {
 		await new Promise((r) => setTimeout(r, 100));
 		const provider = createMockedProviderWithMock(ctx.mockAPI);
 		ctx.app = createApp({
+			initialConfig: TEST_CONFIG,
 			dataDir: ctx.dataDir,
 			agentProvider: provider,
 			projects: [
@@ -487,6 +489,7 @@ describe("Bug 1: yield wake bgOrphans persisted exactly once", () => {
 
 		const provider = createMockedProviderWithMock(ctx.mockAPI);
 		ctx.app = createApp({
+			initialConfig: TEST_CONFIG,
 			dataDir: ctx.dataDir,
 			agentProvider: provider,
 			projects: [

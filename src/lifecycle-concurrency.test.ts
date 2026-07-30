@@ -39,6 +39,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { TEST_CONFIG } from "./test-utils.ts";
 import { toToolDefinition } from "./tool-def.ts";
 import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
 import type { TaskNode } from "./types.ts";
@@ -92,6 +93,7 @@ async function setup(): Promise<Ctx> {
 	const provider = createMockedProviderWithMock(mockAPI);
 	const projectId = ulid();
 	const app = createApp({
+		initialConfig: TEST_CONFIG,
 		dataDir,
 		agentProvider: provider,
 		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],

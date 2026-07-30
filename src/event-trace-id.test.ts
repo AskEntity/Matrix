@@ -30,6 +30,7 @@ import {
 	waitForIdle,
 } from "./test-utils/emission-harness.ts";
 import { createMockedProviderWithMock } from "./test-utils/mock-anthropic-api.ts";
+import { TEST_CONFIG } from "./test-utils.ts";
 
 describe("Bug 3: traceId semantics — run-bound vs external", () => {
 	let ctx: EmissionTestContext;
@@ -350,6 +351,7 @@ describe("Bug 3: traceId distinct across restarts", () => {
 		await new Promise((r) => setTimeout(r, 100));
 		const provider = createMockedProviderWithMock(ctx.mockAPI);
 		ctx.app = createApp({
+			initialConfig: TEST_CONFIG,
 			dataDir: ctx.dataDir,
 			agentProvider: provider,
 			projects: [

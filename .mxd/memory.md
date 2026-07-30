@@ -3939,3 +3939,90 @@ commit's message against its diff, and nothing can.
 after any commit whose message makes a claim about scope, run `git show --stat` and confirm the file
 count.** Same family as *`git checkout -- <file>` reverts to the last COMMIT* — a git command that
 quietly relocates work you had already arranged, where the tell is a number you did not look at.
+
+## The context window is asked for, and it belongs to the ENDPOINT rather than the model
+
+**DECIDED 2026-07-29 (user): *"先问端点,不要 config 覆盖,我们本地不要 config 覆盖,也不要兜底,把 本地的检测删了。"*** The same rule
+as `DEFAULT_MODEL`, one field over: **a number nobody chose, silently deciding when we compact.**
+Deleted with nothing put back — the substring guess in the Anthropic provider, the `CONTEXT_WINDOWS`
+table and `DEFAULT_CONTEXT_WINDOW` in the OpenAI one. `src/context-window.ts` asks the endpoint's
+`/models` and THROWS when it will not answer.
+
+**Both directions were live and both were silent, which is the whole reason nothing was red.**
+`claude-sonnet-5` measures 1,000,000 and we guessed 200,000 — the guess matched the literal
+`sonnet-4`, so a new generation simply fell through. `claude-opus-4-1-20250805` measures 200,000 and
+we guessed 1,000,000, because bare `opus` matched everything. ⚠️ **The over-estimate is the
+dangerous half**: compacting at ~900K against an API that refuses at 200K walks into the compaction
+deadlock recorded above. 200000 and 1000000 are both entirely normal numbers to see.
+
+⭐ **Read BOTH keys — `max_input_tokens ?? context_length` — because the key follows the PROTOCOL
+DIALECT, not the configured provider.** kimi's auth group is `provider: "anthropic"` with a
+`baseUrl`, and its models response looks Anthropic all over (`type`, `display_name`, `created_at`,
+an envelope with `first_id`/`has_more`) while putting the number under OpenAI's name. Pick the key
+from the provider type and you get a confident 200000 with 1M sitting in the next field.
+
+⚠️ **And read nothing else, however limit-shaped it looks.** Anthropic's `max_tokens` sits directly
+beside `max_input_tokens` and is the OUTPUT cap — 128,000 next to a 1,000,000 window — which is the
+LiteLLM #14876 confusion. OpenClaw #88596 read xAI's `long_context_threshold`, a PRICING breakpoint,
+and reported a 1M model as 200K.
+
+⚠️ **Cache on `baseUrl + model`, never on the model alone.** `k3` is 1M and `k3-256k` is 256K at ONE
+host; GPT-5.5 is 1,050,000 on OpenAI's own API and 272,000 of input through the codex endpoint. A
+model does not even have one NAME across deployments — Haiku 4.5 is `claude-haiku-4-5-20251001` on
+the Claude API, `anthropic.claude-haiku-4-5-20251001-v1:0` on Bedrock and
+`claude-haiku-4-5@20251001` on Vertex. The endpoint is the thing that knows.
+
+⭐ **Matching is EXACT on the model id, and the reason is not "prefixes are sloppy".** `/v1/models`
+is keyed by model **ID**; an **alias** is a separate documented name that the server resolves to
+whatever snapshot it currently points at, and it is designed to MOVE. So there is no correct
+client-side alias→ID mapping — a prefix match gets today's answer right by naming convention, and
+the day an alias is repointed it silently follows list order instead of the official mapping. The
+non-alias cases fall out of the same rule: `claude-opus-4` is a prefix of both a 1M id and a 200K
+one. ⚠️ **MEASURED COST, accepted**: `claude-haiku-4-5` is NOT among the 11 ids the endpoint lists
+and the messages API accepts it anyway (200), so exact matching really does break a config that
+works today. That is why a miss **suggests** the single prefix candidate and resolves nothing —
+suggest, never resolve, because an id the user writes into config is chosen and auditable while one
+we resolved for them is guessed and invisible. All four of Anthropic's dated models have exactly one
+candidate, so the suggestion covers every alias in play. ⚠️ Do not "fix" aliases by reading
+`response.model` off a probe call: it expands them, and this file already records it measured as NOT
+ground truth.
+
+**NEGATIVE RESULTS, so nobody re-derives them.** OpenRouter is public, carries `context_length` on
+all 367 models and has zero bare-name collisions — and is still wrong as a fallback table: it
+covered **3 of the 15 models we measured, with every kimi model missing**, and it reports the window
+*as accessed through OpenRouter*, a middleman's routing parameter standing in for upstream
+capability. A vendored registry (LiteLLM's `model_prices_and_context_window.json`, models.dev) is
+the same hardcoding at larger scale, expiring just as silently. **`api.openai.com/v1/models` does
+not return a context length at all**, and the codex catalog routes answer 401 rather than 404 — so
+the OpenAI path now fails at startup. That costs nothing today, because it is not the provider we
+bootstrap on, and it is honest: an endpoint that will not state its own limit is one we cannot
+safely pick a compaction point for.
+
+**The Anthropic SDK client reaches BOTH endpoints**, because kimi is an anthropic-provider group
+with a `baseUrl` — so `client.models.list()` needs no hand-built copy of the auth headers. The
+standing warning above is that beta headers, timeout and baseUrl are already hand-matched at three
+sites with nothing enforcing agreement; this did not make it four.
+
+## The integration suite was running a configuration no install can have
+
+⭐ **Deleting the last context-window guess turned 333 tests across 21 files red, all one cause — and
+the cause was in the harness, not in production.** `DEFAULT_CONFIG.model` is `""`, tests inject
+`agentProvider` and never `initialConfig`, so `model: ""` travelled config resolution → provider
+construction → `agent_start` (into the durable log) → the request, with nothing on that path
+objecting. `getContextWindow("")` had been answering **200_000**: a window for a model that does not
+exist, produced by a substring test that `""` merely fails. **The suite was green throughout and was
+never evidence about a real install.** The 333 were the deletion working.
+
+**So a test that RUNS an agent declares its model** — `createApp({…, initialConfig: TEST_CONFIG})`,
+where `TEST_CONFIG` is `{...DEFAULT_CONFIG, model: TEST_MODEL}` in `src/test-utils.ts` with the
+reason attached. Which model an integration test runs decides its context window and therefore its
+compaction thresholds, so naming it at the call site is the point rather than boilerplate: the one
+file that had always named its model (`openai-responses-integration.test.ts`, `gpt-4.1-mini`) was
+the one file that stayed green.
+
+⚠️ **A test double standing in for an endpoint has to be able to REFUSE.** `ValidatingMockAPI`
+serves the measured production catalogue — 11 real ids with their real `max_input_tokens` — and a
+test may replace it, including with `[]`. Answering whatever model it is asked about would put the
+deleted default back inside the harness, where nothing could ever go red. **And four hand-written
+copies of the SDK client stub lived in one test file**, none of them able to answer `models.list`;
+they are now one `createMockAnthropicClient`. Four copies of a fake is four places to miss one.

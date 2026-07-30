@@ -2,6 +2,7 @@ import {
 	afterAll,
 	afterEach,
 	beforeAll,
+	beforeEach,
 	describe,
 	expect,
 	mock,
@@ -12,18 +13,59 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { clearContextWindowCache } from "./context-window.ts";
 import type { Event, EventSpec } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import {
-	clearContextWindowCache,
+	createOpenAIResponsesAdapter,
 	eventsToOpenAIResponsesMessages,
-	fetchContextWindowFromAPI,
-	getContextWindow,
 	getModelPricing,
 	OpenAIResponsesCompatibleProvider,
 	streamResponsesAPI,
 } from "./openai-responses-compatible-provider.ts";
 import { tool } from "./tool-definition.ts";
+
+/**
+ * What every endpoint in this file answers to `GET /models`.
+ *
+ * The provider loop now asks the endpoint for the context window before its
+ * first API call and throws if it will not answer — `src/context-window.ts`
+ * deleted the static table, the substring guess and the default constant. So a
+ * runLoop fixture has to say what its deployment offers, the same way a real
+ * one does. Numbers are OpenAI's published windows for these two models.
+ */
+function modelsListResponse(): Response {
+	return new Response(
+		JSON.stringify({
+			data: [
+				{ id: "gpt-4.1-mini", context_length: 1_047_576 },
+				{ id: "gpt-4o-mini", context_length: 128_000 },
+			],
+		}),
+		{ status: 200, headers: { "Content-Type": "application/json" } },
+	);
+}
+
+/**
+ * Wrap a fetch mock so `/models` is served before the handler sees it.
+ * Intercepting OUTSIDE the handler matters: several of these mocks count calls
+ * or record bodies, and the window lookup is not one of the requests they are
+ * about.
+ */
+function withModelsList(
+	handler: (url: string, init?: RequestInit) => Response | Promise<Response>,
+): typeof fetch {
+	return mock(async (url: string | URL | Request, init?: RequestInit) => {
+		const urlStr =
+			typeof url === "string"
+				? url
+				: url instanceof URL
+					? url.toString()
+					: url.url;
+		if (urlStr.endsWith("/models")) return modelsListResponse();
+		return handler(urlStr, init);
+	}) as unknown as typeof fetch;
+}
 
 function queueWithPrompt(content: string, cwd?: string): MessageQueue {
 	const q = new MessageQueue();
@@ -171,8 +213,8 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 		let authHeader: string | undefined;
 		const originalFetch = globalThis.fetch;
 		const doneArgs = JSON.stringify({ status: "passed", result: "ok" });
-		globalThis.fetch = mock(
-			async (_url: string | URL | Request, init?: RequestInit) => {
+		globalThis.fetch = withModelsList(
+			async (_url: string, init?: RequestInit) => {
 				authHeader =
 					new Headers(init?.headers).get("authorization") ?? undefined;
 				return sseResponse([
@@ -257,153 +299,137 @@ describe("Responses pricing and context windows", () => {
 		expect(p.inputPer1M).toBe(0.25);
 		expect(p.outputPer1M).toBe(2);
 	});
-
-	test("returns context window for gpt-5.4", () => {
-		expect(getContextWindow("gpt-5.4")).toBe(1_050_000);
-	});
-
-	test("prefix match prefers longest context window key", () => {
-		expect(getContextWindow("gpt-5.4-mini-preview")).toBe(400_000);
-	});
 });
 
-describe("fetchContextWindowFromAPI", () => {
-	afterEach(() => {
+/**
+ * Replaces `describe("fetchContextWindowFromAPI")`, whose five tests all
+ * asserted behaviour that no longer exists: a null return that let a static
+ * table take over, and prefix matching in both directions. Both were deleted
+ * with the table — see src/context-window.ts. What survives is the inversion:
+ * the adapter must ask, and must throw rather than answer with anything else.
+ */
+describe("OpenAI adapter.getContextWindow asks the endpoint", () => {
+	function withFetch<T>(
+		handler: (url: string, init?: RequestInit) => Promise<Response>,
+		body: (calls: () => string[]) => Promise<T>,
+	): Promise<T> {
+		const originalFetch = globalThis.fetch;
+		const urls: string[] = [];
+		globalThis.fetch = mock(
+			async (url: string | URL | Request, init?: RequestInit) => {
+				const urlStr =
+					typeof url === "string"
+						? url
+						: url instanceof URL
+							? url.toString()
+							: url.url;
+				urls.push(urlStr);
+				return handler(urlStr, init);
+			},
+		) as unknown as typeof fetch;
+		return body(() => urls).finally(() => {
+			globalThis.fetch = originalFetch;
+		});
+	}
+
+	function modelsResponse(data: Array<Record<string, unknown>>): Response {
+		return new Response(JSON.stringify({ data }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
+	}
+
+	beforeEach(() => {
 		clearContextWindowCache();
 	});
 
-	test("skips /models lookup when base URL already points at /responses", async () => {
-		const originalFetch = globalThis.fetch;
-		const fetchSpy = mock(async () => {
-			throw new Error("should not fetch");
-		});
-		globalThis.fetch = fetchSpy as unknown as typeof fetch;
-		try {
-			const window = await fetchContextWindowFromAPI(
-				"https://api.example.com/v1/responses",
-				"token",
-				"gpt-4o",
-			);
-			expect(window).toBeNull();
-			expect(fetchSpy).not.toHaveBeenCalled();
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
+	test("reads context_length and sends the bearer token", async () => {
+		await withFetch(
+			async () => modelsResponse([{ id: "gpt-4o", context_length: 131072 }]),
+			async (urls) => {
+				const adapter = createOpenAIResponsesAdapter(
+					"https://api.example.com/v1",
+					"token",
+				);
+				expect(await adapter.getContextWindow("gpt-4o")).toBe(131072);
+				expect(urls()).toEqual(["https://api.example.com/v1/models"]);
+			},
+		);
 	});
 
-	test("caches successful /models lookups by requested model", async () => {
-		const originalFetch = globalThis.fetch;
-		const fetchSpy = mock(
-			async () =>
-				new Response(
-					JSON.stringify({
-						data: [{ id: "gpt-4o", context_length: 131072 }],
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				),
+	/**
+	 * The old `canFetchModels` refused to look when the configured base URL
+	 * already pointed at /responses, and fell through to the static table. With
+	 * the table gone, refusing to look can only produce a worse error, so the
+	 * models URL is derived from the API root instead.
+	 */
+	test("still asks when the configured base URL points at /responses", async () => {
+		await withFetch(
+			async () => modelsResponse([{ id: "gpt-4o", context_length: 131072 }]),
+			async (urls) => {
+				const adapter = createOpenAIResponsesAdapter(
+					"https://api.example.com/v1/responses",
+					"token",
+				);
+				expect(await adapter.getContextWindow("gpt-4o")).toBe(131072);
+				expect(urls()).toEqual(["https://api.example.com/v1/models"]);
+			},
 		);
-		globalThis.fetch = fetchSpy as unknown as typeof fetch;
-		try {
-			const first = await fetchContextWindowFromAPI(
-				"https://api.example.com/v1",
-				"token",
-				"gpt-4o",
-			);
-			const second = await fetchContextWindowFromAPI(
-				"https://api.example.com/v1",
-				"token",
-				"gpt-4o",
-			);
-			expect(first).toBe(131072);
-			expect(second).toBe(131072);
-			expect(fetchSpy).toHaveBeenCalledTimes(1);
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
 	});
 
-	test("prefix match: requested model is base name, API returns versioned", async () => {
-		const originalFetch = globalThis.fetch;
-		const fetchSpy = mock(
-			async () =>
-				new Response(
-					JSON.stringify({
-						data: [{ id: "gpt-4o-2024-08-06", context_length: 131072 }],
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				),
+	test("throws on a non-200, naming the endpoint and the status", async () => {
+		await withFetch(
+			async () => new Response("nope", { status: 401 }),
+			async () => {
+				const adapter = createOpenAIResponsesAdapter(
+					"https://chatgpt.com/backend-api/codex/responses",
+					"token",
+				);
+				await expect(adapter.getContextWindow("gpt-5-codex")).rejects.toThrow(
+					/chatgpt\.com\/backend-api\/codex\/models returned 401/,
+				);
+			},
 		);
-		globalThis.fetch = fetchSpy as unknown as typeof fetch;
-		try {
-			const result = await fetchContextWindowFromAPI(
-				"https://api.example.com/v1",
-				"token",
-				"gpt-4o",
-			);
-			expect(result).toBe(131072);
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
 	});
 
-	test("prefix match: requested model is versioned, API returns base", async () => {
-		const originalFetch = globalThis.fetch;
-		const fetchSpy = mock(
+	/**
+	 * `api.openai.com/v1/models` really does answer 200 with no context length
+	 * on any entry. That used to silently become 128_000; it is now an error
+	 * that says which keys were looked for and which the entry carried.
+	 */
+	test("throws when the model is listed without either window key", async () => {
+		await withFetch(
 			async () =>
-				new Response(
-					JSON.stringify({
-						data: [{ id: "gpt-4o", context_length: 131072 }],
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				),
+				modelsResponse([{ id: "gpt-4o", object: "model", owned_by: "openai" }]),
+			async () => {
+				const adapter = createOpenAIResponsesAdapter(
+					"https://api.openai.com/v1",
+					"token",
+				);
+				await expect(adapter.getContextWindow("gpt-4o")).rejects.toThrow(
+					/neither max_input_tokens nor context_length/,
+				);
+			},
 		);
-		globalThis.fetch = fetchSpy as unknown as typeof fetch;
-		try {
-			const result = await fetchContextWindowFromAPI(
-				"https://api.example.com/v1",
-				"token",
-				"gpt-4o-2024-08-06",
-			);
-			expect(result).toBe(131072);
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
 	});
 
-	test("prefix match: no match returns null", async () => {
-		const originalFetch = globalThis.fetch;
-		const fetchSpy = mock(
+	test("a near-miss id is suggested, never resolved", async () => {
+		await withFetch(
 			async () =>
-				new Response(
-					JSON.stringify({
-						data: [{ id: "gpt-4o", context_length: 131072 }],
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				),
+				modelsResponse([
+					{ id: "gpt-4o-2024-08-06", context_length: 131072 },
+					{ id: "gpt-4.1", context_length: 1047576 },
+				]),
+			async () => {
+				const adapter = createOpenAIResponsesAdapter(
+					"https://api.example.com/v1",
+					"token",
+				);
+				const call = adapter.getContextWindow("gpt-4o");
+				await expect(call).rejects.toThrow(/Did you mean "gpt-4o-2024-08-06"/);
+				await expect(call).rejects.toThrow(/does not list it/);
+			},
 		);
-		globalThis.fetch = fetchSpy as unknown as typeof fetch;
-		try {
-			const result = await fetchContextWindowFromAPI(
-				"https://api.example.com/v1",
-				"token",
-				"claude-3",
-			);
-			expect(result).toBeNull();
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
 	});
 });
 
@@ -649,22 +675,8 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 			body: Record<string, unknown>;
 		}> = [];
 
-		globalThis.fetch = mock(
-			async (url: string | URL | Request, init?: RequestInit) => {
-				const urlStr =
-					typeof url === "string"
-						? url
-						: url instanceof URL
-							? url.toString()
-							: url.url;
-				if (urlStr.endsWith("/models")) {
-					return new Response(
-						JSON.stringify({
-							data: [{ id: "gpt-4.1-mini", context_length: 1047576 }],
-						}),
-						{ status: 200, headers: { "Content-Type": "application/json" } },
-					);
-				}
+		globalThis.fetch = withModelsList(
+			async (urlStr: string, init?: RequestInit) => {
 				const body = JSON.parse(String(init?.body ?? "{}")) as Record<
 					string,
 					unknown
@@ -810,8 +822,8 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 	test("serializes optional booleans and strings in tool schema for Responses", async () => {
 		const originalFetch = globalThis.fetch;
 		const requests: Array<Record<string, unknown>> = [];
-		globalThis.fetch = mock(
-			async (_url: string | URL | Request, init?: RequestInit) => {
+		globalThis.fetch = withModelsList(
+			async (_url: string, init?: RequestInit) => {
 				requests.push(JSON.parse(String(init?.body ?? "{}")));
 				return sseResponse([
 					{
@@ -893,8 +905,8 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 		const originalFetch = globalThis.fetch;
 		let callCount = 0;
 		const requestBodies: Record<string, unknown>[] = [];
-		globalThis.fetch = mock(
-			async (_url: string | URL | Request, init?: RequestInit) => {
+		globalThis.fetch = withModelsList(
+			async (_url: string, init?: RequestInit) => {
 				callCount++;
 				const body = JSON.parse(String(init?.body ?? "{}")) as Record<
 					string,
@@ -1083,21 +1095,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 
 	test("function_call_arguments.done supplies name/args when output_item.added omits them", async () => {
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = mock(async (url: string | URL | Request) => {
-			const urlStr =
-				typeof url === "string"
-					? url
-					: url instanceof URL
-						? url.toString()
-						: url.url;
-			if (urlStr.endsWith("/models")) {
-				return new Response(
-					JSON.stringify({
-						data: [{ id: "gpt-4.1-mini", context_length: 1047576 }],
-					}),
-					{ status: 200, headers: { "Content-Type": "application/json" } },
-				);
-			}
+		globalThis.fetch = withModelsList(async () => {
 			const doneArgs = JSON.stringify({
 				status: "passed",
 				result: "All good",
