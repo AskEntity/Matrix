@@ -2855,10 +2855,14 @@ is symmetric (two projects as peers). **The same wire format does not make them 
 the next `mxd send` threw "No auth group configured". Adding a *second* provider leaves the existing
 default alone — we never silently clobber an existing pick.
 
-**macOS test gotcha**: `mkdtemp(tmpdir())` returns `/var/folders/…` while a spawned subprocess's
-`process.cwd()` returns the resolved `/private/var/folders/…`. `resolveCurrentProject` compares
-strings, fails, and the CLI exits with "No project found for current directory" long before reaching
-whatever you were testing. Wrap fixture paths in `realpathSync`.
+**Project lookup compares by REALPATH, and that is a production property rather than a test
+convention.** `resolveCurrentProject` and `resolveProject` both go through `src/real-path.ts`, so a
+project registered through a symlink is still found from inside its own directory — which it was
+not, until the fixture workaround that had been hiding it got read properly (*A workaround in the
+fixtures is where a production bug goes to be forgotten*). On macOS `mkdtemp(tmpdir())` returns
+`/var/folders/…` while a spawned subprocess reports `/private/var/folders/…`; wrapping fixture paths
+in `realpathSync` is now hygiene, so an unrelated test cannot fail with a path-resolution message,
+and no longer a requirement for the CLI to work.
 
 ---
 # Web UI — Routing, State & Event Handling
@@ -3460,13 +3464,13 @@ positive control inside the same test. **Same rule with the ENVIRONMENT supplyin
 the first version of "Enter with an image and no text does not send" **passed on code that had no
 guard at all**, because under happy-dom Enter never reached the handler.
 
-### What happy-dom does not do
+### The two happy-dom gaps that do not announce themselves
 
-Most of its gaps announce themselves within a minute — no layout, so no geometry; you cannot type
-into a React controlled input; a key handler needs a `.focus()` first or React throws before any
-listener runs. (Hence the way to drive a composer in a test: **seed the draft through the
-component's own `localStorage` key, `.focus()` + keydown for the submit.**) **Two do not announce
-themselves, and both are paid by someone other than the author:**
+Most of what happy-dom lacks costs you thirty minutes and tells you so: no layout means no geometry,
+you cannot type into a React controlled input, and a key handler needs a `.focus()` first or React
+throws before any listener runs. (Which is why a composer is driven in a test by seeding the draft
+through the component's own `localStorage` key, then `.focus()` plus keydown.) **Two are different in
+kind, because they are silent and the bill lands on somebody else:**
 
 - **It silently drops MutationObserver callbacks under GC pressure** — the listener holds its
   callback in a `WeakRef` with no strong reference anywhere, so after any GC pass mutations are
@@ -3766,17 +3770,14 @@ open, and the absence looked exactly like compliance. Relatedly, `check:ci` exit
 pile of warnings, so **do not "fix" the warning count during a gate restoration**: biome's suggested
 `!` → `?.` autofix is marked unsafe and silently changes assertion semantics.
 
-## Two smaller standing facts
+## When the runner itself is the bug, the summary is the last thing to trust
 
-`mxd` is installed globally via `bun link`; `package.json` has `"bin": { "mxd": "src/cli.ts" }` and
-the CLI carries a `#!/usr/bin/env bun` shebang.
-
-**If `bun test` ever dies mid-suite, check the EXIT CODE rather than the summary.** Bun 1.3.7-1.3.8
-killed the whole test process with SIGTRAP on any Worker teardown, so the crashing file ran first
-and "3 tests passed" was meaningless — every claim of a green suite from that era was worthless.
-Fixed by upgrading. The generalisable part is the check, and that **a minimal 7-line repro plus a
-version matrix over isolated installs settled in minutes what days of test-level debugging could
-not.**
+**If `bun test` ever dies mid-suite, read the EXIT CODE rather than the summary.** Bun 1.3.7-1.3.8
+killed the whole test process with SIGTRAP on any Worker teardown, so the crashing file ran first and
+`3 tests passed` was meaningless — every claim of a green suite from that era was worthless. Fixed
+by upgrading, and what survives the fix is the method: **a minimal 7-line repro plus a version matrix
+over isolated installs settled in minutes what days of test-level debugging could not.** Reach for
+the version matrix as soon as a failure's shape does not depend on your code.
 
 ---
 # Reference & Pitfalls
@@ -4846,11 +4847,6 @@ environment, or a defect the test is absorbing on production's behalf?**
 `/tmp → /private/tmp` for free, but `/tmp` is a real directory on Linux — so relying on it is *a
 fixture that cannot express the difference*, passing against the broken code by testing nothing.
 Build an explicit `symlinkSync` and assert the link differs from its target.
-
-**CORRECTION to *macOS test gotcha* in the CLI-onboarding region: production compares by realpath
-now.** `resolveCurrentProject` and `resolveProject` both go through `src/real-path.ts`. Wrapping
-fixture paths is no longer required for the CLI to find a project; where it survives it is fixture
-hygiene, so an unrelated test cannot fail with a path-resolution message.
 
 ## One primitive, two standards, in two files
 
