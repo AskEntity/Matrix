@@ -24,7 +24,6 @@ import {
 	unlinkSync,
 	writeSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
@@ -44,6 +43,7 @@ import {
 	type ProjectLayer,
 	saveGlobalConfig,
 } from "./config.ts";
+import { resolveDataDir } from "./data-paths.ts";
 import {
 	checkDataRootCollisions,
 	effectiveDataRoot,
@@ -2289,7 +2289,7 @@ export type { RegisteredPlugin };
 // ── Production entry ──
 
 if (import.meta.main) {
-	const dataDir = process.env.MXD_DATA_DIR ?? join(homedir(), ".mxd");
+	const dataDir = resolveDataDir();
 	let daemon: DaemonInstance;
 	try {
 		daemon = await createDaemon({

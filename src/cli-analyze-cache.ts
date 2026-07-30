@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { projectTasksDir } from "./data-paths.ts";
+import { projectTasksDir, resolveDataDir } from "./data-paths.ts";
 
 /**
  * One cache miss row, ready for printing.
@@ -231,11 +230,17 @@ export function filterByMaxGap(
  *
  * Matrix layout: JSONL files live under
  * `{dataDir}/projects/{projectId}/plugin/matrix/tasks/{taskId}.jsonl`.
+ *
+ * `dataDir` is required. It defaulted to `join(homedir(), ".mxd")`, and its one
+ * caller never passed anything — so the default WAS the value, and
+ * `mxd analyze-cache` read from `~/.mxd` however `MXD_DATA_DIR` was set. The
+ * caller takes it from `resolveDataDir()` now; this stays a pure function of
+ * its arguments.
  */
 export function resolveTaskJsonlPath(
 	projectId: string,
 	taskId: string,
-	dataDir: string = join(homedir(), ".mxd"),
+	dataDir: string,
 ): string {
 	return join(
 		projectTasksDir(dataDir, projectId, "@/plugin/matrix"),
@@ -285,7 +290,7 @@ export function runAnalyzeCache(args: string[]): void {
 		}
 	}
 
-	const path = resolveTaskJsonlPath(projectId, taskId);
+	const path = resolveTaskJsonlPath(projectId, taskId, resolveDataDir());
 	if (!existsSync(path)) {
 		console.error(`JSONL not found: ${path}`);
 		process.exit(1);

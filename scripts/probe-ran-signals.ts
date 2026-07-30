@@ -10,11 +10,14 @@
  * Run: bun scripts/probe-ran-signals.ts
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { projectTasksDir, projectTreeJsonPath } from "../src/data-paths.ts";
+import {
+	projectTasksDir,
+	projectTreeJsonPath,
+	resolveDataDir,
+} from "../src/data-paths.ts";
 
-const dataDir = join(homedir(), ".mxd");
+const dataDir = resolveDataDir();
 const projectId = process.argv[2] ?? "01KN0H3365HN9W560R7WC3XQ10";
 const dataRoot = "@/plugin/matrix";
 

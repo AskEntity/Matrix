@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { resolveDataDir } from "./data-paths.ts";
 
 export interface AnthropicAuthGroup {
 	provider: "anthropic";
@@ -256,8 +256,15 @@ export const DEFAULT_CONFIG: MatrixConfig = Object.freeze({
 	cacheTtl: Object.freeze({ root: "1h", child: "5m" }),
 }) as MatrixConfig;
 
+/**
+ * Global config lives in the data dir, which is what the daemon reads
+ * (`join(dataDir, "config.json")` at its production entry). This used to be
+ * `join(homedir(), ".mxd", "config.json")`, which is the SAME file only while
+ * `MXD_DATA_DIR` is unset — so every CLI command that read or wrote global
+ * config touched a different file than the daemon under a custom data dir.
+ */
 function globalConfigPath(): string {
-	return join(homedir(), ".mxd", "config.json");
+	return join(resolveDataDir(), "config.json");
 }
 
 /**

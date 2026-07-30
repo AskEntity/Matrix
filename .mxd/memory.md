@@ -4301,3 +4301,129 @@ hook does not transfer, and the signal has to be which credential the client end
 And a negative assertion on a header (`not.toContain("oauth-2025-04-20")`) passes just as happily
 on a header you failed to READ, so it needs a positive control beside it asserting a beta feature
 that is always sent; verified by making the accessor path wrong and watching the control fire.
+
+## The CLI and the daemon must agree about the user's config, and nothing checks that they do
+
+**They are two processes reading one file, so every disagreement is silent.** MEASURED 2026-07-30,
+two sites of one shape:
+
+- `globalConfigPath()` was `join(homedir(), ".mxd", "config.json")`; the daemon reads
+  `join(dataDir, "config.json")` where `dataDir = MXD_DATA_DIR ?? ~/.mxd` — **the same file only
+  while that variable is unset.** With it set, `mxd config auth list` printed the group under HOME
+  while the daemon used the one in the data dir, so `mxd config set … --global` **exited 0 having
+  edited a file nothing reads.**
+- `DAEMON_URL` hardcoded `localhost:7433` while the daemon listens on `globalConfig.port` — a field
+  the Settings UI exposes with 7433 as its **placeholder**, i.e. explicitly a value the user may
+  change. Changing it lost every CLI command to *"Daemon is not reachable at
+  http://localhost:7433"*: true, useless, unfalsifiable from outside.
+
+⭐ **DECIDED (user, 2026-07-30): *"不能让任何人去读 HOME,而是从 data dir
+或者默认 home derive 出来"*.** One exported derivation — `resolveDataDir()` in
+`data-paths.ts` — and everything takes the value from there. A whole-repo audit fails on any other read of HOME for our data, with two
+allowlisted exceptions carrying their reasons: `PLIST_DIR`, because macOS genuinely puts
+LaunchAgents under HOME and it must **not** move with our data dir, and codex-auth expanding a `~`
+the user typed.
+
+⚠️ **The two byte-identical duplicates are WHY the other three drifted.** `cli.ts` and `daemon.ts`
+carried `MXD_DATA_DIR ?? join(homedir(), ".mxd")` character for character, while `config.ts`,
+`runtime.ts` and cli.ts's `LOG_DIR` each dropped the env half — plus three more in `scripts/` that a
+grep of `src/` never saw. **Nobody ever had to reconcile anything, because there was no one place to
+reconcile.** So a duplicate is not just a maintenance cost: it is the absence of the site where a
+divergence would have been noticed.
+
+⚠️ **Do NOT read this as "delete the env fallbacks", and over-applying that would break the suite:**
+`MXD_DATA_DIR` is how tests get an isolated data dir and `MXD_DAEMON_URL` is how they reach an
+ephemeral port. The rule from the model/credential deletions is *an env var must not silently answer
+a question config already answers*. **An explicit override losing to nothing is fine; a DEFAULT that
+overrides config is the bug.**
+
+⚠️ **The same audit moved `LOG_DIR` from `${HOME}/.mxd/logs` to `<data dir>/logs`, and that is a
+user-visible change nobody asked for.** Anyone running with `MXD_DATA_DIR` set will find the
+daemon's logs somewhere new. It is kept because logs are runtime state and a log directory ignoring
+`MXD_DATA_DIR` is the same defect as a config path ignoring it; the risk that would have made it
+wrong — the installed daemon logging somewhere the CLI does not look — does not exist, because the
+plist bakes in the absolute path the CLI resolved.
+
+**An unreadable config is REPORTED and then falls back, and both halves are deliberate.** Reporting,
+because silently substituting a port is the defect itself. Falling back, because the remedy the
+message names (`mxd config init`) is a CLI command — a throw at module load takes away the only tool
+that can repair the state, which is the self-bootstrap death chain in miniature. ENOENT is not this
+case: a missing file is a fresh install and returns defaults.
+
+**NEGATIVE RESULTS from the same sweep, so nobody re-measures.** `createApp`'s `defaultConfig`
+(`dataDir: join(homedir(), ".mxd")`) was **dead** — zero callers ever omitted the argument, in
+production or in any test — while `resolveTaskJsonlPath`'s identical-looking default was the
+**opposite**: its one caller never passed anything, so the default WAS the value and
+`mxd analyze-cache` read `~/.mxd` however the env was set. ⭐ **Two defaults written the same way,
+one unreachable and one load-bearing; only counting callers tells them apart, and the reflex fix
+(point both at the new function) is wrong for one of them. A default's value is decided entirely by
+who OMITS the argument, which is the one thing its definition cannot show you.** Also: `ProjectManager`'s `getByPath` and
+`ensureProject` have **zero production callers**, which is most of the answer to the path-identity
+question filed as `01KYSBAA41QRBA7GY3ZQ9M9RBR`.
+
+## ⚠️ A source audit written in the same commit as its fix matches its own explanation
+
+**Three times in one evening.** The audit greps for the expression you just deleted, and the fix
+leaves behind comments that QUOTE that expression as the thing that was wrong — so the instrument
+fires on prose that exists *only because the fix happened*. The sibling `dataRoot` audit bought
+precision with a required `\(`, which cannot help here: `join(homedir(), ".mxd")` inside a comment is
+character-identical to the code. **Skip comment-opening lines.** Rewording the prose instead is the
+wrong repair — it teaches the next person that the audit is the thing to bend.
+
+⚠️ **And collect offending LINES; never assert on the file text.**
+`expect(wholeFile).not.toContain(x)` prints all 1600 lines of `cli.ts` into the log on failure, the
+same shape as the 227MB run already recorded here.
+
+## ⭐ A workaround in the fixtures is where a production bug goes to be forgotten
+
+**This file recorded the TEST half of a real production defect and not the defect.** The entry said
+*"macOS test gotcha: `mkdtemp(tmpdir())` returns `/var/folders/…` while a spawned subprocess's
+`process.cwd()` returns `/private/var/folders/…`. Wrap fixture paths in `realpathSync`"* — and
+production had no such layer, so a project registered through a symlink answered **"No project found
+for current directory" from inside its own directory**. The test carrying the workaround also carried
+a comment stating that production string-compares: **the defect was written down twice and filed
+nowhere.**
+
+**The mechanism outlives the instance: routing around a problem in a fixture removes the only
+pressure to fix it, and the note you write to help the next person teaches the workaround as the
+answer.** So ask of any "test gotcha" you are about to record: **is this a fact about the test
+environment, or a defect the test is absorbing on production's behalf?**
+
+⚠️ **The fixture for such a fix must not borrow the platform's symlink.** macOS hands you
+`/tmp → /private/tmp` for free, but `/tmp` is a real directory on Linux — so relying on it is *a
+fixture that cannot express the difference*, passing against the broken code by testing nothing.
+Build an explicit `symlinkSync` and assert the link differs from its target.
+
+**CORRECTION to *macOS test gotcha* in the CLI-onboarding region: production compares by realpath
+now.** `resolveCurrentProject` and `resolveProject` both go through `src/real-path.ts`. Wrapping
+fixture paths is no longer required for the CLI to find a project; where it survives it is fixture
+hygiene, so an unrelated test cannot fail with a path-resolution message.
+
+## One primitive, two standards, in two files
+
+`realpathOr` — realpath, falling back to the literal path — already existed in `src/tools/bash.ts`,
+where the cwd notice has always resolved symlinks because **a linked worktree's `.git` is a FILE**.
+Another file answered the same question (do these two paths name one directory) with `===`.
+**Neither was wrong on its own terms; the repo held two standards for one primitive.** Now
+`src/real-path.ts`, imported by both. ⚠️ The fallback is the load-bearing half: `realpathSync`
+**throws** on a path that does not exist, and both callers COMPARE paths rather than read them — a
+deleted project directory or a typo'd `--project` must still compare — so returning the literal
+makes the worst case the old behaviour instead of a crash.
+
+## A field dropped at a body-type boundary reddens nothing
+
+`POST /projects/:id/tasks` declared its body inline and omitted `draft` and `color`, which
+`createTaskOp` accepts and `PATCH` forwards. **Failing to declare a field is not a type error
+anywhere**, so a client asking for a draft got **201 plus a `pending` task** — something
+dispatchable — and `draft` vs `pending` is the "can this execute" bit. It is pinned now the way
+`UPDATE_FIELDS` is: a list in the test `satisfies readonly (keyof CreateTaskOpts)[]` plus an
+`Exclude<>` exhaustiveness assertion, so the NEXT field is a compile error in a file that names the
+route. ⚠️ **The pin ties the list to the INTERFACE, not the list to the test bodies** — it cannot
+know a field is merely named there, and that limit is stated beside it.
+
+**The `auth add` flag check is the same rule in argv**, extending tonight's `--key`/`--auth-json`
+refusal by one door: a credential flag belonging to the OTHER provider was parsed, stored and
+dropped. Its table is a **subtract**-list, so a flag added to the parser and forgotten lands on the
+refused side where somebody notices. The instance most likely to be hit is a typo — `--baseurl`
+silently vanished, creating a group against Anthropic's own endpoint with someone else's key, and
+every call 401'd as if the key were bad.

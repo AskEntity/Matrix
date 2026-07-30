@@ -21,9 +21,15 @@ import { DEFAULT_CONFIG } from "./config.ts";
 const CLI_PATH = new URL("./cli.ts", import.meta.url).pathname;
 
 describe("P2.1: `mxd config auth add` auto-promotes first group to defaultAuth", () => {
-	// The CLI's `loadGlobalConfig()` reads `homedir()/.mxd/config.json`.
-	// To isolate test runs, we override HOME so `homedir()` returns
-	// `fakeHome`, placing the config at `fakeHome/.mxd/config.json`.
+	// Global config lives at `<data dir>/config.json`, and the data dir is
+	// `MXD_DATA_DIR ?? ~/.mxd` (`resolveDataDir`). `runAuthAdd` below strips
+	// MXD_DATA_DIR and overrides HOME, so the fallback branch runs and the
+	// config lands at `fakeHome/.mxd/config.json`, isolated from the real one.
+	//
+	// ⚠️ CORRECTED: this used to say `loadGlobalConfig()` reads
+	// `homedir()/.mxd/config.json` full stop. That was true and is the bug that
+	// `resolveDataDir` fixed — the daemon reads the DATA DIR's config, so under a
+	// custom MXD_DATA_DIR the CLI was editing a file nothing reads.
 	let fakeHome: string;
 	let configPath: string;
 	let mxdDir: string;
@@ -181,5 +187,114 @@ describe("P2.1: `mxd config auth add` auto-promotes first group to defaultAuth",
 			apiKey: "sk-ant-test-proxy",
 			baseUrl: "https://proxy.example.com",
 		});
+	});
+	// ── flags that belong to the OTHER provider, and flags that belong to nobody ──
+	//
+	// `--key` + `--auth-json` on one openai group is already refused, because the
+	// two reach DIFFERENT endpoints and a group carrying both would quietly ignore
+	// one. That rule stopped one door short: a credential flag belonging to the
+	// OTHER provider was parsed, stored in a local, and then dropped by the branch
+	// that ran — exiting 0 while ignoring a flag the user had just typed.
+	//
+	// The `--base-url` test above is the same bug in its third form, already
+	// fixed. What follows closes the remaining two: wrong-provider flags, and
+	// flags nothing recognises at all.
+
+	test("--oauth-token on an openai group is refused, not ignored", async () => {
+		await seedConfig({ defaultAuth: "", authGroups: {} });
+		const { code, stderr } = await runAuthAdd(
+			"mine",
+			"--provider",
+			"openai",
+			"--key",
+			"sk-openai",
+			"--oauth-token",
+			"tok-anthropic",
+		);
+		expect(code).toBe(1);
+		expect(stderr).toContain("--oauth-token");
+
+		// Nothing written: a refusal that had already saved the group would be a
+		// partial update, and the caller was told the call failed.
+		const written = JSON.parse(await readFile(configPath, "utf-8"));
+		expect(written.authGroups).toEqual({});
+	});
+
+	test("--auth-json on an anthropic group is refused, not ignored", async () => {
+		await seedConfig({ defaultAuth: "", authGroups: {} });
+		const { code, stderr } = await runAuthAdd(
+			"mine",
+			"--provider",
+			"anthropic",
+			"--key",
+			"sk-ant",
+			"--auth-json",
+			"/Users/me/.codex/auth.json",
+		);
+		expect(code).toBe(1);
+		expect(stderr).toContain("--auth-json");
+
+		const written = JSON.parse(await readFile(configPath, "utf-8"));
+		expect(written.authGroups).toEqual({});
+	});
+
+	test("a misspelled flag is refused instead of dropped", async () => {
+		// The likeliest instance of the whole class, and the most confusing to
+		// debug: `--baseurl` (no hyphen) used to vanish, so the group was created
+		// against Anthropic's own endpoint with someone else's key, and every call
+		// 401'd as if the key were bad.
+		await seedConfig({ defaultAuth: "", authGroups: {} });
+		const { code, stderr } = await runAuthAdd(
+			"kimi",
+			"--provider",
+			"anthropic",
+			"--key",
+			"sk-kimi",
+			"--baseurl",
+			"https://api.moonshot.cn/anthropic",
+		);
+		expect(code).toBe(1);
+		expect(stderr).toContain("--baseurl");
+
+		const written = JSON.parse(await readFile(configPath, "utf-8"));
+		expect(written.authGroups).toEqual({});
+	});
+
+	test("REGRESSION: every flag a provider DOES take is still accepted", async () => {
+		// The control. Without it, "refuse unknown flags" passes just as well on
+		// an implementation that refuses everything.
+		await seedConfig({ defaultAuth: "", authGroups: {} });
+		const { code, stderr } = await runAuthAdd(
+			"codex",
+			"--provider",
+			"openai",
+			"--auth-json",
+			"~/.codex/auth.json",
+			"--base-url",
+			"https://chatgpt.com/backend-api/codex",
+		);
+		expect(code, `stderr: ${stderr}`).toBe(0);
+
+		const written = JSON.parse(await readFile(configPath, "utf-8"));
+		expect(written.authGroups.codex).toEqual({
+			provider: "openai",
+			authJsonPath: "~/.codex/auth.json",
+			baseUrl: "https://chatgpt.com/backend-api/codex",
+		});
+	});
+
+	test("REGRESSION: --key with --auth-json on one openai group is still refused", async () => {
+		await seedConfig({ defaultAuth: "", authGroups: {} });
+		const { code, stderr } = await runAuthAdd(
+			"both",
+			"--provider",
+			"openai",
+			"--key",
+			"sk-openai",
+			"--auth-json",
+			"~/.codex/auth.json",
+		);
+		expect(code).toBe(1);
+		expect(stderr).toContain("not both");
 	});
 });

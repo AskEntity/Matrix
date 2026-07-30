@@ -1,9 +1,14 @@
 /**
- * Canonical dataRoot and projectId resolution.
+ * Canonical resolution of OUR paths: the data dir itself (`resolveDataDir`)
+ * and everything built from a `dataRoot` or `projectId` beneath it.
  *
- * Pure path math + validation. No other imports. Imported by plugin.ts,
- * runtime/helpers.ts, and daemon.ts — everything that constructs a path
- * from `dataRoot` or `projectId` MUST route through here.
+ * Two rules of the same kind, one file, one whole-repo audit each in
+ * `data-paths.test.ts`. Imported by plugin.ts, runtime/helpers.ts, config.ts,
+ * cli.ts and daemon.ts — everything that decides WHERE our data lives, or
+ * constructs a path from `dataRoot` or `projectId`, MUST route through here.
+ *
+ * Path math + validation, plus the one environment read named below. Nothing
+ * else may read `HOME` to find our data.
  *
  * Why this file exists (Audit FU5):
  *
@@ -19,7 +24,36 @@
  *     `<dataDir>/projects/<projectId>/`. Belt-and-braces if regex ever loosens.
  */
 
+import { homedir } from "node:os";
 import { join } from "node:path";
+
+/**
+ * THE data dir. `MXD_DATA_DIR` if set, else `~/.mxd`.
+ *
+ * ⚠️ This is the ONLY place that reads `HOME` to locate our data, asserted by a
+ * whole-repo audit. It exists because the question had FIVE answers: cli.ts and
+ * daemon.ts carried this expression character for character, and `config.ts`,
+ * `runtime.ts` and cli.ts's `LOG_DIR` each dropped the `MXD_DATA_DIR` half.
+ * MEASURED consequence of the config.ts one: with `MXD_DATA_DIR` set, `mxd
+ * config auth list` printed the group from `~/.mxd/config.json` while the
+ * daemon ran on the group in `$MXD_DATA_DIR/config.json` — so `mxd config set
+ * … --global` exited 0 having edited a file nobody reads.
+ *
+ * ⭐ The two byte-identical duplicates are why the other three could drift:
+ * nobody ever had to reconcile them, because there was no one place to
+ * reconcile. That is the argument for this function, rather than for correcting
+ * three expressions.
+ *
+ * ⚠️ `||` not `??`, deliberately: it gives POSIX `${MXD_DATA_DIR:-default}`
+ * semantics, so `MXD_DATA_DIR=` (exported empty, indistinguishable from unset
+ * to a shell) falls back instead of rooting every path at the process cwd.
+ *
+ * Callers take the value FROM here and pass it down; helpers below stay pure
+ * functions of an explicit `dataDir`.
+ */
+export function resolveDataDir(): string {
+	return process.env.MXD_DATA_DIR || join(homedir(), ".mxd");
+}
 
 /**
  * `dataRoot` must be `"@"` or `"@/<segment>(/<segment>)*"`, where each segment
