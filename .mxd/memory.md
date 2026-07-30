@@ -463,8 +463,12 @@ because it is invisible.** `update_task {status:"closed"}` refused with *"Use cl
 while `close_task` refused anything not `verify`/`failed`, so **the first error named a road the
 second did not accept** and a draft had no path to a terminal state at all. Observed damage: a
 superseded draft was marked done by writing `[已解决 by <id>]` into its **TITLE** — state encoded in
-a string, invisible to every status filter, sitting in the active pool forever. **The workaround is
-legible to humans and to nothing else.**
+a string, invisible to every status filter, so it sat in the active pool. **The workaround is
+legible to humans and to nothing else.** Both defects were fixed and that title still stood two days
+later, because **fixing a defect does not retract the workarounds it caused**: the task that solved
+the underlying bug had recorded *"root should retitle or delete this"* in its own `done()` result,
+and nothing owns a result round (`01KYT7EYE951TPFSYRJ3QAH2F5`). **So the repair has to be filed as
+its own act, by the person who removes the defect, or the damage outlives it.**
 
 **The fix for a false remedy is a SHORTER message, not a more complete one.** The instinct when
 correcting a wrong instruction is to explain — name the false path, name the alternative, price it —
@@ -2452,11 +2456,12 @@ lines: 1269 `update_task` calls, 21 carrying a rejected status, **zero** combini
 
 **The one instance that DID fire is where two separately-filed defects turn out to be one call.**
 The single silently-dropped field in that whole history is a `title` on task
-`01KYCQVA8CP2S0X6V1QDQSBH8X` — **and that task's title today is the `[已解决 by …]` string named
-above as the damage from `closeTaskOp`'s dead end.** Same call. They COMPOUND: the dead end forced a
-workaround that encodes state where only a human can read it, and the partial update made that
-workaround take two attempts to land. **Two small defects can multiply — and you only ever see it by
-tracing one concrete incident through both, never by reading either bug report.**
+`01KYCQVA8CP2S0X6V1QDQSBH8X` — **and that task carried the `[已解决 by …]` title named above as the
+damage from `closeTaskOp`'s dead end, until it was undone on 2026-07-30.** Same call. They COMPOUND:
+the dead end forced a workaround that encodes state where only a human can read it, and the partial
+update made that workaround take two attempts to land. **Two small defects can multiply — and you
+only ever see it by tracing one concrete incident through both, never by reading either bug
+report.**
 
 **A field dropped at a body-type boundary reddens nothing.** `POST /projects/:id/tasks` declared its
 body inline and omitted `draft` and `color`, which `createTaskOp` accepts. **Failing to declare a
