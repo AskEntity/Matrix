@@ -2105,9 +2105,10 @@ made when event count was the only primitive. ⚠️ **In all four, searching st
 and only continued because the user pushed — and each further round found something more important
 than the last.** Hence *"one query is not a search; stop when a round adds nothing, not when a round
 finally returns something."* The scale of the gap, counted over root's whole 110MB session log
-(2026-07-30, re-measured rather than inherited): **`search` (files) 955 calls, `search_tasks` 42** —
-plus `read_file` 775 and `bash` 4314, so the record is consulted about once per twenty times the
-working tree is. ⚠️ **Counting it needs `{"type":"tool_call","tool":"…"}` — the field is `tool`,
+(2026-07-30, re-measured rather than inherited): of **14,453 tool calls**, `search` (files) **955**,
+`read_file` **775**, `bash` **4320**, and `search_tasks` **42**. Pick the denominator deliberately,
+because the three available ones differ by 6×: **23** file-searches per tree-search, **41** if
+read_file counts as consulting the tree, **144** against everything that touches the working tree. ⚠️ **Counting it needs `{"type":"tool_call","tool":"…"}` — the field is `tool`,
 not `name`.** A first pass grepping `"name":"mcp__mxd__search_tasks"` returned **10** — a plausible
 small number that would have "confirmed" the thesis while actually matching that string inside
 tool_result CONTENT, since results quote the text of other calls. **The wrong instrument answered in
