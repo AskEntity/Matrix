@@ -759,10 +759,14 @@ IDENTICAL to a text block**; only the TRAILING assistant message 400s, which is 
 trailing-assistant rule wearing a different error string. A repair that dropped such a turn was
 built on the false premise and is deleted.
 
-**`launchingNodes` guards the window between "we decided to launch" and "the session exists", and it
-must be taken with no await before `beforeChildLaunch`** — `git worktree add` takes seconds, two
-concurrent launches both used to get through, and the loser's throw marked the node `failed` and
-sent a bogus `task_complete(failed)` while the winner was still running. ⚠️ **Never add a node to it
+**`launchingNodes` is a MUTEX over a race condition, and the racing window is the same `git worktree
+add` that *`close_task` can land inside the launch window* races with — the seconds between "we
+decided to launch" and "the session exists".** It must be taken with no await before
+`beforeChildLaunch`, or it guards nothing: two concurrent launches both used to get through, and the
+loser's throw marked the node `failed` and sent a bogus `task_complete(failed)` while the winner was
+still running. **Two guards over one window, added years apart for different symptoms, and the third
+consumer of that window has none** — which is why the close bug reads as unrelated until you notice
+they are all timing the same seconds. ⚠️ **Never add a node to it
 from outside `runAgentForNode`**: `autoResumeProjects` once pre-registered every node it was about
 to launch, `runAgentForNode` saw the set and returned early, and no agent ever started.
 
@@ -1172,7 +1176,9 @@ the guard test will not fail before someone "tidies" the list, which is the enti
 
 The failure mode is silent **by construction**: "no matches" and "never looked" produce a
 byte-identical tool_result, so it can never be caught by inspecting the answer — only by a
-**collision with something you independently already know**. And you search for things you do NOT
+**collision with something you independently already know**. That is the general shape under *Two
+situations, one observation*; what this section adds is the asymmetry between an empty and a partial
+one. And you search for things you do NOT
 already know, so a false `(no matches)` is indistinguishable from the truth AND confirms your
 hypothesis, which is the most comfortable answer there is.
 
@@ -1587,6 +1593,19 @@ broadcast before persisting, so SSE clients were shown events they could not ref
 **Four consumers each about to build their own locator is the signal worth recognising, not the
 feature: when several unrelated features independently reach for the same missing primitive, the
 primitive is the work and the four features are its callers.**
+
+**NEGATIVE RESULT, and it is the reason the invariant is *persist before broadcast* rather than the
+obvious *stamp before broadcast*: pre-stamping the eid inside `emitEvent` was implemented and
+reverted.** It puts TWO mutators on `lastEventIds` — a synchronous `stampEid` in `emitEvent` and the
+asynchronous `stampEvent` inside the write queue — which is a **TOCTOU race**: under rapid emission,
+or interleaved with a direct append (`deliverMessage` via `onPersist`), the parentEid chain breaks
+and the walk silently degrades. The eid is stamped in exactly ONE place, the write queue; what
+changed later was the ORDER, so the broadcast carries the already-stamped copy. **One stamper,
+reordered — never a second stamper placed earlier.** Interim consequence while only the revert was
+in place, recorded because it looked like a bug and was a priced trade: live SSE events carried no
+eid, so Rewind appeared on the REST batch path (load, reconnect, post-rollback refetch) and not
+mid-stream, which is acceptable because rewinding is a deliberate act after reading a bad reply
+rather than a real-time affordance.
 
 **`LogEntry.id` is derived from the eid** via a map that is never cleared — clearing it IS the
 failure it prevents. The log is replaced wholesale on every refetch, and a module counter made every
@@ -2491,7 +2510,8 @@ is the `env` option on the Worker constructor. Verified empirically, including t
 restart at 0 on every boot. There was already a guard for a pre-restart cursor *beyond* the new
 tail, but not for one falling *inside* the new incarnation's refilled range — and after a real
 restart agents auto-resume and stream, so the buffer refills past the browser's low cursor before it
-reconnects. Catch-up was then marked done and the full initial state never sent.
+reconnects. Catch-up was then marked done and the full initial state never sent
+(`01KPCY0GC8DBTTHZYH3PRPCT6R`, a draft promoted by a live user report).
 
 **What that is, in one sentence: a sequence number is only meaningful INSIDE one process
 incarnation, so comparing a cursor across a restart is a category error — and `getEventsSince` had
@@ -2984,7 +3004,10 @@ reader. Both were broken by the same underlying thing — **the log is the whole
 replaced wholesale on every refetch** — which is why they belong in one section.
 
 A survey of everything that reads, writes or invalidates the scroll offset found **30 touch points,
-not the 9 anyone could name** — including the browser itself, via `overflow-anchor`.
+not the 9 anyone could name** — including the browser itself, via `overflow-anchor`. The user asked
+for the whole map instead of the two reported symptoms (`01KYBN3AG5PD2H1K09HS9XA39E`), on an
+argument worth reusing: **nine mechanisms were already writing that one number and were already
+known to fight each other, so fixing any single symptom without the map is adding a tenth.**
 
 ⭐ **The predicate that works is `scrollRangeShrank(prev, current)`, where range = `scrollHeight −
 clientHeight`.** Two predicates were proposed on the *cause* side and one measurement killed both:
@@ -4081,7 +4104,9 @@ the earlier boundary, not to touch what it means in `resolveConfig`.
 READ time.** Past that line `undefined` (inherit) and `""` (an explicit empty override) are one
 value, so the state could not be rendered — and, worse, could not be EXITED: typing then deleting
 left `""` in the draft and no gesture anywhere set it back to `undefined`, making the panel a
-one-way door into an empty override. **Derive the state from the raw value FIRST, then coalesce
+one-way door into an empty override. **This is *Two situations, one observation* in the UI layer,
+and it is the instance that shows the collision is not only a diagnosis problem: once two states
+share one value, a control built on that value cannot REACH one of them.** **Derive the state from the raw value FIRST, then coalesce
 for the control** — the reverse order is what erases it.
 
 ⚠️ **CORRECTION to the first version of this entry, which said the panel "already had the right
