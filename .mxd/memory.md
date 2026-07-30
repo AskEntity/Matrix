@@ -170,6 +170,7 @@ The roll-call, because the range is the argument — these are not one subsystem
 | a per-frame scroll probe | "range unchanged" | 267ms of samples missing; the thing measured had blocked the thread |
 | a three-signal task probe | `false` for all 551 tasks | `tree.json`'s `nodes` is an ARRAY, so `Object.entries` gave indices |
 | a `ps`-based autoResume audit | "still costs 4 procs" | it was measuring an agent a human started 14s after boot |
+| `ps -o rss=` on macOS | the daemon "is using 1638MB" | 84% of its library mapping is unresident; `phys_footprint` is **325MB** |
 
 **Four things a control has to be**, each paid for by a real one. It must be **able to FAIL for the
 reason you are testing** — a reviewer confirmed with a positive control that grep could see a file's
@@ -201,6 +202,22 @@ a tail they were unrepresentative of.
 > **A checker reporting a small plausible number is a claim about the checker exactly as much as one
 > reporting zero, and it will never prompt anyone to say so.** Plant against it too, and state any
 > loss count with a SCOPE CLAUSE naming what was adjudicated and at what granularity.
+
+**On macOS, measure a process with `footprint -p` or `vmmap --summary`, never with `ps` RSS.** RSS
+counts read-only library mappings the OS can drop at any moment: measured on this daemon, libraries
+total 1.9G with **310MB resident (16%)**, so RSS read 1638MB where `phys_footprint` — the number
+Activity Monitor shows and the one Apple treats as the process's cost — read **325MB**. Two further
+things that made a 5× error survive three rounds, and neither is about macOS: **peak and resident
+are different questions** (that same process peaked at 1620MB during boot and fell back, so the
+expensive thing was real and transient, not resident), and **a conclusion accepted is not a
+measurement re-taken** — the user had already said "not a big problem" and root edited the wording
+around the number without re-measuring it.
+
+> **What actually caught it was the user reading a different instrument and saying the number out
+> loud.** Nothing about 1638MB looks wrong; it is only wrong next to 325MB. **A disagreement between
+> two instruments is the cheapest evidence there is, and it only exists if both readings get
+> spoken** — which is an argument for reporting the raw number and its source rather than the
+> conclusion you drew from it.
 
 **A grep for a SYMBOL cannot answer a question about a BEHAVIOUR, and the empty result looks the
 same either way.** Root searched `hasRunningChildren`, found it genuinely dead, and concluded that
