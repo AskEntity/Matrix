@@ -612,6 +612,17 @@ other — which is the shape this file exists to merge:
 | a task description | codex's `auth.json` expiry passed forward as the current state — of a file that ROTATES ITSELF, and did so 17 seconds after the task was filed |
 | a result round | "the codex path 401s, waiting on credentials" read downstream as "fix the credential and it answers"; the 401 was masking four further mismatches |
 | a code comment | `indeterminate = inherit`, describing a control nobody built; and "the CLI has the same check client-side", describing a door that was never guarded |
+| a timeout value | `48.2s` and `15×` carried forward as measurements of a slowdown, when 48.2s is a 45,000ms budget plus 3.2s of setup |
+
+**That last row is the sharpest, because the number was real and the arithmetic was right.** A
+truncated — censored — observation reports the BUDGET, not the quantity: any run where `done()`
+misses a 45s deadline reports ≈48.2s whether the true cost was 46 seconds or 500, so three runs
+landing within 59ms of each other proves the constant is stable and says nothing about whether the
+phenomenon is. `15×` is just `45000 / 3200`, a property of the budget, and it is a LOWER BOUND.
+**Never tune a timeout from a ratio that timeout produced — that is calibrating a constant against
+itself**, and the note warning against raising the timeout sat in the same document as the number,
+with nobody noticing the number was already contaminated by it. To get the real multiple you must
+first raise the budget and re-measure under load.
 
 **The rule: a stored explanation is a claim with a shelf life, and the shelf life is invisible on its
 face.** A MEASUREMENT can be quoted if you say when it was taken. An EXPLANATION quoted forward is
@@ -770,6 +781,17 @@ something had already gone wrong. **The shape that holds:** a NON-async `.catch`
 step sits in its own try/catch and the LOAD-BEARING delivery comes last but cannot be starved. **Do
 NOT collapse that into one try/catch around the whole body** — it converts a loud unhandled
 rejection into a silently skipped notification.
+
+**Price what that fix COST as well, because the trade recurs across this repo: making a failure
+survivable also removes the pressure that would have got it fixed.** A separate latent race — a
+test's `afterEach` deleting a dataDir while an agent that test had auto-launched was still writing —
+used to surface as `# Unhandled error between tests`, with `bun test` exiting 1 on zero failures.
+Ugly, and the only reason anybody ever found it. With each cosmetic step now in its own try/catch,
+that same race prints `[launch-failure] could not persist failed status for <id>: ENOENT` and the
+suite exits 0. **The trade is right — noisy beats fatal, and the load-bearing `task_complete` must
+not be starved by a failed status write — but it is not free.** The general form: **whenever you
+make a failure survivable, say what the NEW detector is, in the place the old one used to fire.**
+Here that is a grep for `[launch-failure]` in the run output; waiting for red no longer works.
 
 ### An unhandled rejection is an outage here, not a log line
 
@@ -2312,11 +2334,14 @@ foreground bash that is ignoring abort, and it moves the command cleanly to back
 **breaks the orphan-repair semantic.** A stuck tool is supposed to get bounded grace and then be
 left as an orphan, so repair synthesizes the interrupted tool_result on the next launch.
 
-**The 1s bound was tuned under a single-run assumption and is now a known flake source.** Normal
-load today is 3-4 sub-agents each running the full suite plus root running it too. **Triage
-shortcut: the suite's own total run time is a load probe** — 300.8s on the failing run against
-267-269s on passing ones. Check that before suspecting your diff. Open question: whether 1s still
-holds under parallel load (`01KYCMVKN14RRX0KK0H2CNTD9P`).
+**The 1s bound is an ENVIRONMENTAL FACT FROZEN INTO A CONSTANT, and the environment changed without
+anything announcing it.** The note that set it read *"3s was too slow for 5s test timeouts; 1s is
+the sweet spot"* — a sweet spot found on a machine running one suite. Today 3-4 sub-agents each run
+the full suite in their own worktree while root runs it too. **Parallel agents are how this project
+WORKS, not an accident**, so that assumption is not occasionally violated, it is systematically
+false. Open question, unchanged: whether 1s still holds under parallel load. The whole flake
+picture, the triage order and the reason not to just raise the number are under *A flake that
+usually passes gets filed as weather* (`01KYCMVKN14RRX0KK0H2CNTD9P`).
 
 **Worker init has a 30s timeout.** Without it a plugin whose `runtime.ts` hangs at top level hangs
 daemon boot forever — no log, no 503. ⚠️ **A `beforeAll` that calls `createDaemon` with a worker
@@ -3364,6 +3389,63 @@ the second cost is worse than the first: one such assertion produced a 227MB log
 the instrument was fine and its INPUT was destroyed by an assertion elsewhere. Compare booleans in
 DOM tests.
 
+## A flake that usually passes gets filed as weather
+
+**The common cause of every flake here is one sentence: the load profile changed and nothing
+announced it.** Timeouts and "pick a probably-free port" were both tuned against a single suite on
+an idle machine; four suites in parallel is now the normal way this project runs. So these are not
+tests that are occasionally unlucky — they are tests carrying an assumption that is now
+systematically false.
+
+**Do not simply raise the timeout.** It is the cheapest fix and wrong twice: it lowers the test's
+power to catch a real regression, and the next load change re-flakes it. Classify first, because the
+three classes share no remedy.
+
+1. **The test should not depend on load at all.** `P2.8` wants to verify error CLASSIFICATION, so it
+   should test the classifier instead of standing up a real daemon on a port it guessed was free.
+2. **The test genuinely is testing timing.** `Restart B` relies on shutdown leaving a
+   foreground-tool orphan for `autoResume` to repair, and that window IS the behaviour under test.
+   This kind cannot be abstracted away, but ask whether it needs WALL CLOCK or only event ORDER —
+   waiting on an event makes load irrelevant.
+3. **It is not on the test side.** If parallel suites are normal, perhaps the suite serializes
+   certain groups when it detects concurrency, or pre-merge verification is root's single run.
+
+**Fix the MECHANISM, never the test name.** Written up by instance this reads as three flaky tests;
+measured, two runs of one unchanged tree failed two DIFFERENT ones, so the victim set is not those
+three — it is *any timing-sensitive restart test*, and patching names is whack-a-mole the fourth test
+wins. The three mechanisms really are distinct: TIMING, PORT COLLISION, and a genuine RACE
+(`tracker.save()` renaming into a dataDir that `afterEach` has already deleted, while an agent the
+test itself auto-launched is still writing).
+
+**Triage in this order, and it is worth more than any of the numbers.** Is the failure a TIMEOUT or
+an ASSERTION — only a timeout comes down this road. Run that one file alone three times: low
+variance and all green means load rather than your diff. Then compare the two full runs' total time
+**and the number of tests COLLECTED** — equal collection with a longer run is pure load, a much
+harder claim than duration alone, though collection itself jitters (3212 vs 3213 observed), so it is
+evidence when equal and not a refutation when not. **The ~290s total-run probe is a DIRECTION, not a
+classifier**: it sees "the whole machine is slowing" and is blind to "this test always had a race" —
+the race above surfaced on a 272s run. When it does not fire, nothing has been ruled out.
+
+**Check whether you caused it yourself.** An agent can manufacture this flake against itself by
+starting a second background `bun test` that overlaps the first; two recorded data points are
+exactly that. Before backgrounding a suite, look for one already running.
+
+**The cost is not the 4.5 minutes of re-run.** A flake that usually passes gets filed as weather
+rather than as signal — `P2.8` was hit by two agents on two days and classified as weather both
+times, with the mechanism one step away from the error message. And it makes a correct
+mutation-testing result **uninterpretable**: once `1 fail` is something a human has to adjudicate,
+`0 fail` stops being a gate anybody can trust automatically.
+
+**One measured constraint on any fix, because it contradicts the obvious framing.** The slowdown is
+NOT uniform inside a failing test: the segment before the wait ran at isolation speed (~3187ms under
+load against ≤3224ms isolated), and only the phase waiting on three children to reach `done()`
+stalled. So do not design against "everything is 15× slower". Standing hypothesis, flagged as a
+hypothesis: that phase is the only one spawning REAL git subprocesses — the stress harness does a
+real `git init` and activates `setup_worktree.sh` as a live hook, so every child launch runs `git
+worktree add` plus the hook, and git is disk- and `index.lock`-bound, hence serial. Four parallel
+suites would then be contending on git rather than on CPU, which also explains why the pure-JS setup
+segment did not slow at all. To confirm it, measure `git worktree add` itself under load.
+
 ## ⚠️ `bunfig.toml`'s preload is load-bearing; do not remove it
 
 It does one thing: `import "react-dom/client"` once per process, before any test file. react-dom is
@@ -3629,11 +3711,41 @@ failing test tells you within a minute is deliberately not here.
 
 ## Known bugs and open design
 
-- **Subtree message routing.** The parent chain shipped — `send_message` walks upward through
-  `getTaskAbove`, so any ancestor is reachable — but you can still only reach DIRECT sub tasks, not
-  arbitrary descendants. That half is what remains open.
-- **Tool search** — dynamic tool discovery instead of sending every tool. Anthropic has a
-  server-side `defer_loading`; the user prefers a client-side design.
+- **Subtree message routing, and the principle the shipped half never states: RESTRICT LAUNCH, NOT
+  MESSAGING.** Messaging a *pending* task IS launching it — worktree, agent, the lot; messaging a
+  *running* task is only communication. So the permission question was never "who may talk to whom",
+  it is **"who may START something"**, and the thing being prevented has a name in the design:
+  隔空启动, reaching across the tree to boot a task that is none of your business. The agreed rule
+  (`01KN6QE6WV0SWX2CR21BFZF71W`) falls straight out of that reading — direct children may be messaged
+  AND launched, because you created them; any RUNNING agent in your own subtree at any depth may be
+  messaged only, because reaching a live grandchild is coordination while starting one is a remote
+  boot that belongs to its direct parent; any ancestor may be messaged only, because escalation is
+  always valid. Unrelated tasks, never. **The parent chain shipped and the subtree half did not**, so
+  today you can reach any ancestor and only DIRECT sub tasks.
+
+  **That draft also carries a live defect nobody has fixed, and it belongs to the silent indefinite
+  hang class: agent→ancestor is the ONLY delivery direction in this system that cannot start its
+  target.** The `isUpward` branch of `send_message` delivers with `{ quiet: true }`, and `quiet` does
+  exactly one thing — skip auto-launch when the agent is not running. The premise that made this look
+  safe, *"parents are already running or it's root"*, is false: a task orchestrator can call `done()`
+  while its own sub tasks are still working, and `done()` tears the session down. So a sub task
+  calling `send_message(requestReply: true)` to a stopped ancestor gets its message persisted and
+  nothing else, then yields exactly as the prompt instructs, and waits forever with nothing anywhere
+  reporting it. **Three surfaces say three different things**: the tool description promises every
+  pending/closed target launches on receipt, `task_complete` on the normal Phase 2 path really does
+  launch the ancestor, and upward `send_message` does not — so one child reaching one parent gets
+  opposite behaviour depending on which channel it used. Commit `ecfff7ce` (2026-03-31) added `quiet`
+  deliberately and recorded the mechanism without the reason. A defensible position may exist — a
+  parent the user stopped should not be dragged back by its children — but `task_complete` already
+  violates it, so **at least two of the three have to move.** Deferred by the user 2026-07-25: settle
+  the policy question first (may a descendant start an ancestor?), then make all three agree.
+- **Tool search** — dynamic tool discovery instead of sending every tool, so a large MCP tool set
+  stops costing context on every request. Anthropic's server-side answer is `defer_loading: true` on
+  the deferred definitions plus a `tool_search` server tool that injects one on demand; the user
+  prefers a client-side design. **The reason for that preference is not in the record** — the draft
+  `01KN8WP20GTS34D1D6WAQPKJBV` states the server mechanism and the cross-provider gap (OpenAI may not
+  support it) and never says why we would rather own it, so whoever picks this up is re-deciding
+  rather than implementing.
 - **`close_task` can land inside the launch window. This is a race condition between closing a task
   and starting its agent, and the racing window is `git worktree add` — seconds wide.**
   `ensureChildAgentRunning` takes the launch lock, awaits `beforeChildLaunch`, and only afterwards
