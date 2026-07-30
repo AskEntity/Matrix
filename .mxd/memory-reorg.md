@@ -1,492 +1,524 @@
-# Reorganizing `memory.md`
+# Regenerating `memory.md`
 
-The full procedure for a periodic memory reorganization. **You do not need this to write an entry**
-— that is `memory.md` § *Writing This File*. You need this when the append zone has grown past the
-point where related material can be found together.
+**You do not need this to write an entry** — that is `memory.md` § *Writing this file*. You need it
+when the append zone has grown to the point where related material can no longer be found together.
 
-Runs so far: **2026-07-25 phases 1-2**, 5,448 lines / 146 sections → 119, 18 commits. **2026-07-25
-phase 3 (condense)**, 7,616 → 3,797 lines and 136 → 81 sections across 17 regions, 24 commits,
-leaving zero `SUPERSEDED` banners and zero strikethroughs. **2026-07-25 phase 4**, six connective
-repairs. **2026-07-28 rewrite**, 4,987 → ~3,050: a different exercise from the ones above, and the
-one that produced the two sieves below. (The line count rises between runs because ordinary work
-continues — see `memory.md` on this file having a rate rather than a size.)
+The procedure is two steps, and the second one is a single act rather than a sequence:
 
-⭐ **That run's method is the reusable part, and it is not "read the file and find redundancy".** The
-file had lost its WHYs, and **the WHYs were never lost — they were sitting in the task tree**, in the
-description of the task that produced each section, often in the user's own words. The loss happens
-at the moment the entry is written: the author has just spent hours inside the mechanism, the
-mechanism is in front of them, and the intention is one screen away in a task description they do not
-re-open. So: **for each section, `search_tasks` for the task that produced it, read its WHY, and
-rewrite the section's opening with that sentence.** One measured instance — a 178-line section on
-`scrollRangeShrank`, thirty touch points and remount measurements, whose originating task opens
-*"if the AI is still producing output, the user gets locked into follow mode just by scrolling down —
-they can't read at their own pace"*, a sentence that appeared nowhere in the file. ⚠️ **Hit rate is
-uneven rather than zero, and the unevenness is the useful signal**: it tells you which sections
-genuinely have no recoverable WHY and therefore need one derived, instead of leaving you to guess.
+1. **Restore what the file has lost, from the task tree. This step may make the file LONGER.**
+2. **Read the whole file in one read. Write a whole new version in one output, beside it.**
 
----
+Everything below is either how to do those two things or how to check that they worked.
 
 ## Why the file needs this at all
 
-Entries are appended. Append means every new fact lands as far as possible from the fact it
-invalidates, and that distance grows with the file. So contradictions accumulate **at the seams
-between features**, systematically, not randomly.
+Entries are appended, and append means every new fact lands as far as possible from the fact it
+invalidates. Nobody is being careless: the agent writing an entry files it under its own subject,
+which is correct, and it cannot know that a sentence in another region just became false. **The
+correction is written where the CHANGE happened, never where the CLAIM lives.**
 
-Nobody is being careless. The agent writing an entry files it under its own subject, which is
-correct — it does not know that a sentence in another region just became false. **The correction is
-written where the CHANGE happened, never where the CLAIM lives.**
+**Append distance is measured in the FILE, not in TIME.** The intuitive story is that a correction
+lands far from its claim because months passed. Measured: two sections written **the same day by the
+same author**, seventy lines apart, carried the same four-row table and the same conclusion. Nothing
+about elapsed time explains that — appending puts the new entry at the end rather than next to its
+sibling. So a duplicate hunt scoped to "the old regions" is scoped wrong.
 
-This has a consequence that shapes the whole procedure:
-
-> **Phase 1 is not tidying. It is the detector for phase 2.**
-
-### Three kinds of rot, three detectors, none substituting for another
+Three kinds of rot accumulate, and no detector finds more than one of them:
 
 | kind | is a correction written down anywhere? | what finds it |
 |---|---|---|
-| **Superseded** — a later change invalidated this | yes, but filed under the change, never under the claim | putting claim and correction in the same region |
-| **Drained** — a count or list quietly stopped being true | **no.** Nobody thinks they are correcting anything | checking against the source, item by item |
+| **Superseded** — a later change invalidated this | yes, but filed under the change, never under the claim | holding claim and correction in one head at one time |
+| **Drained** — a count or a list quietly stopped being true | **no.** Nobody thinks they are correcting anything | checking against the source, item by item |
 | **Destroyed by understanding** — a curator deleted it as redundant | the content was there until we removed it | being forced to enumerate what you dropped |
 
 The drained kind has **no trigger at all**: a stale count and a fresh count look identical, so the
 interval between deliberate passes is how long a wrong number survives.
 
-⭐ **Symptoms are the retrieval key, and the third rot kind eats them.** `memory.md` is organised by
+**Symptoms are the retrieval key, and the third rot kind eats them.** `memory.md` is organised by
 cause and queried by symptom — the reader arrives holding "the buttons are missing", not "the event
 type was renamed". A symptom looks most redundant exactly when you have just understood its
-mechanism, which is exactly when it is most needed. Keep the conditional form — *"if you break this
-invariant, you will see X"* — and cut the perfect tense, *"in July we had a bug where…"*, which is
+mechanism, which is exactly when it is most needed. Keep the conditional form, *"if you break this
+invariant you will see X"*, and cut the perfect tense, *"in July we had a bug where…"*, which is
 addressed to nobody.
 
-⭐ **Before applying any rule, ask whether the thing in front of you is a CLAIM or an INSTANCE.**
-Every rule here targets what is presented as CURRENT STATE; none targets a string appearing in the
-file. An instance cannot rot — it records something that was true at a moment, and that moment does
-not change. *"You see `2116 pass / 2 fail` and cannot tell WHICH two"* is not a claim about the
-suite's size; the story is identical when the suite reaches three thousand, and deleting the number
-leaves it with no shape. The same pattern presented as state — *"the suite has 2116 tests"* —
-expires silently and is what the rule is for.
+**Before applying any rule, ask whether the thing in front of you is a CLAIM or an INSTANCE.** Every
+rule here targets what is presented as CURRENT STATE. An instance cannot rot — it records something
+that was true at a moment, and that moment does not change. *"You see `2116 pass / 2 fail` and
+cannot tell WHICH two"* is not a claim about the suite's size; the story is identical when the suite
+reaches three thousand, and deleting the number leaves it with no shape. The same pattern presented
+as state — *"the suite has 2116 tests"* — expires silently and is what the rule is for.
 
-⚠️ **This is the one phase-3 loss that nothing can detect.** A curator holding "do not record test
-counts" scans, finds three violations, deletes them, writes them into the enumeration, and is
-compliant at every step — while three arguments lose their skeletons. `comm` does not apply, nothing
-rings, and the content was there until we removed it.
+## Step 1 — Restore the understanding, from the task tree
 
-Contradictions are only visible when the claim and its refutation are in the same place. Reading the
-file top to bottom does NOT find them — by the time you reach the correction you have forgotten the
-original sentence forty sections back. Moving them adjacent is what makes them findable, and it is
-why reordering must happen before, and separately from, any merging.
+**The WHYs were never lost. They are in the task tree**, in the description of the task that
+produced each section, often in the user's own words. The loss happens at the moment the entry is
+written: the author has just spent hours inside the mechanism, the mechanism is in front of them,
+and the intention is one screen away in a task description they do not re-open.
 
----
+So for each section: `search_tasks` for the task that produced it, `get_task` for its description
+and its **result rounds** (conclusions live in the rounds), and `search_logs` when you need what the
+user actually said, because a description is already a retelling of the decision and a result round
+is a second one.
 
-## The three phases
+**There are two axes here and they are not the same job.** One is *why we wanted this*. The other is
+*what KIND of thing this is* — and a section can open with a perfect user quote about the first
+while never once naming the second. The exemplar: `close_task` landing inside the launch window had
+a complete, correct timeline, hook order, seconds, which guard is missing, and the words *race
+condition* appeared nowhere in the file. Say them and the paragraph is readable at a glance; leave
+them out and every reader rebuilds the concept from a sequence.
 
-Each phase is a separate commit (phase 2 may be several). The value comes from the phases staying
-**pure** — the moment you rewrite while moving, the phase-1 invariant is void, and once it is void
-nothing can verify what the file lost.
+**The class-name gap has a cheap mechanical detector, and it is worth running FIRST because one
+command aims the whole pass.** Grep for the standard NAMES of phenomena and look for the ones at
+zero while the phenomenon is plainly described. Measured on one run: `race condition` 0, `TOCTOU` 0,
+`time-of-check` 0, `idempotent` 0, `back-pressure` 0, `off-by-one` 0, against six paragraphs
+describing races and four describing an idempotence fix — while `silent` appeared 121 times.
 
-**The order is forced, and each phase detects something no other one can:**
+> **That ratio is the finding: the file reaches for the SYMPTOM it lived through far more readily
+> than for the MECHANISM a stranger needs in order to look it up.**
 
-| phase | what it does | what only it can detect |
-|---|---|---|
-| **1 · reorder** | move sections into subject regions, delete nothing | **superseded** — append-only files every new fact maximally far from the claim it refutes, so putting the two side by side is the only thing that surfaces the contradiction. One pass found 12. |
-| **2 · merge** | same-subject sections become one narrative | redundancy that is invisible while scattered. The sharp question is *找不同*: once the invariant is stated, an instance earns its lines only if it does NOT fit. |
-| **3 · condense** | delete; `comm` no longer applies, so enumerate every section's disposition | nothing, from the inside — the enumeration is the *only* thing keeping **destroyed by understanding** detectable at all |
-| **4 · read-through** | a fresh agent who did not see phases 1-3 | whether it still READS |
+**The direction of the loss is structural, which is why the tree can always repair it.** A task
+description is written BEFORE the work, while the author still holds the problem as a CATEGORY; the
+memory entry is written AFTER, while they hold the MECHANISM. So descriptions carry class names and
+lack field names, entries carry field names and lack class names, and reading the two side by side
+is not a heuristic — it is the answer sitting in the other document.
 
-Condensing before merging condenses N copies separately and keeps N. Merging before reordering
-cannot see what is the same subject while it is scattered.
+Three constraints on this step:
 
-**Compression is not terseness.** Line count falls because seven sections became one, not because
-sentences became telegrams. Write every surviving sentence out properly.
+- **Do not force a name where the record has none.** Recognising a pattern is a hypothesis to be
+  checked. This repo has already paid for reading several PARTS of one design as several ENTRANCES
+  to one rule, which produced a patch nobody had chosen at a layer nobody had picked. When you
+  cannot find the name, write that the class is unnamed and move on.
+- **Report retrieved and inferred separately.** They are not the same grade of evidence, and the
+  person reading your report cannot tell them apart from the diff.
+- **Leave the task id behind.** It is the only entrance to the full record, and without it the next
+  pass re-runs the same archaeology — or fails to, because the vocabulary has moved since. Measured
+  before one pass: 90 of 130 sections carried no id.
 
-⭐ **`memory.md` has a RATE, not a size — so a line-count target is the wrong instrument.** Measured
-2026-07-25: sixteen sections dated that single day accounted for **1,784 of the file's 7,617 lines,
-23%**, and about **960 lines** after being rewritten at compressed density. **One heavy day produces
-more than a 1,000-line target would allow the whole file to be.** What holds is a rule with a
-trigger — merge a region when it passes some size, re-derive the criterion every Nth pass.
+**Hit rate is uneven rather than zero, and the unevenness is the useful signal**: it tells you which
+sections genuinely have no recoverable WHY and therefore need one derived, instead of leaving you to
+guess which.
 
-### Phase 1 — Reorder (move only)
+## Step 2 — One full read, then one full rewrite, beside it
 
-Move whole sections into topic regions. **Do not change one character of existing content.** You may
-ADD structural lines: region dividers, region headings, blank-line balancing.
+**Read the entire file in a single read. Not section by section, not region by region.** Then write
+the whole new version as a single output, into a new file next to the old one.
 
-- **Invariant: `comm -23 <(sort BEFORE) <(sort AFTER)` must be EMPTY.** Every original line still
-  present, multiplicity not reduced. Additions (`comm -13`) are allowed and should contain nothing
-  but dividers, headings and blanks — check that, too.
-- **Region names may only be REUSED or ADDED. Renaming is a phase-2 edit** — a rename modifies an
-  existing line and breaks the invariant. Expect to keep two or three ill-fitting old names through
-  phase 1; that is correct.
-- **Order within a region: original chronological order.** This is for the MERGE direction — later
-  supersedes earlier, with no ambiguity about which way a conflict resolves.
-- Propose the region scheme and the full section→region assignment **before moving anything**, and
-  get it signed off. Misfiling is expensive: phase 2 then merges things on a wrong adjacency.
+**The one-shot output is not a convenience, it is the mechanism.** Producing the whole thing in one
+pass is what forces it to be a connected narrative: you cannot write chapter nine as if chapter two
+did not exist, and you cannot quietly leave two sections saying the same thing in different words,
+because both are in front of you as you write. Emit it in pieces and you get a shorter directory —
+which is the failure condition, not a smaller success.
 
-### Phase 2 — Merge (one region at a time)
+What the rewrite is doing, stated as operations on each entry:
 
-Now that related material is adjacent, merging is a LOCAL operation — you can see both pieces at
-once and never need the whole file in your head.
+- **Ask: is this WHAT HAPPENED, or WHAT WE UNDERSTOOD?** What happened is in the task tree and in
+  git, and `search_tasks` finds it, so it goes. What we understood stays, as a rule.
+- **Keep the weld only where it is a DEFENCE LINE.** A craft rule with no evidence is a platitude
+  every reader skims; the same rule sitting next to the afternoon it cost is an argument. But the
+  test is not "is this evidence true", it is **would anyone make a different decision without it**.
+  Keep the number that defends a counter-intuitive choice; drop the number that merely proves the
+  fix worked, because that is in the code.
+- **Once is an incident, twice is a pattern, three times is architecture.** When the same class of
+  failure appears in five subsystems, that recurrence IS the content: say it once, hang the
+  instances under it. This is the single largest source of compression, and it is invisible to any
+  section-by-section pass, because no two instances share any wording — they were each filed
+  correctly, under their own subject.
+- **Write the design as a narrative, not a chronology.** "We went from A to B, here is what it is
+  now and why" — not "on the 14th it was A, then it changed". Dates earn their place only when the
+  date IS the fact, such as a credential that expired or a corpus that has since changed.
+- **Compression is not terseness.** The line count falls because seven sections became one, not
+  because sentences became telegrams. Do not stop writing properly in order to save words.
 
-- **Invariant: `comm -23` must be ENUMERABLE**, and the enumeration goes in the commit message.
-  Not "empty" — phase 2 legitimately deletes text — but every removed line must have a stated
-  destination.
-- **Match audit granularity to the granularity at which "did we lose a fact" is decidable.** A small
-  edit: per line. A 350-line collapse: per subsection — list every `##`/`###` of the originals with
-  its disposition (carried / superseded-and-where / dropped-and-why). Line-level audit of a rewrite
-  is noise; subsection-level is checkable.
-- **After merging, re-sort by AUTHORITY: current state first, history below.** Phase 1 ordered by
-  time for the merge direction; that same order puts the most stale text where it is read first.
-  Two sorts, two purposes, no conflict.
-- **Merge duplicated TEXT, never facts.** Every fact, correction and lesson must still be findable.
-- ⚠️ **A refuted claim is DELETED unless it can be written as a guardrail.** This reverses what this
-  document said on its first run (*"a refuted claim becomes a pointer, not a deletion"*), and the
-  reversal is the whole reason phase 3 exists — that instruction is what turned `memory.md` into a
-  changelog of old claims, strikethroughs, corrections and pointers, which every agent then paid for
-  on every launch. The live rule is in `memory.md` § *⚠️ Writing this file*: a past state earns its
-  lines only when a reader without it could not justify the current design or would reintroduce the
-  old one, and then it is written as *"do not change Z back to Y; Y silently loses W"*. **If you
-  cannot write that sentence, delete the old state.**
+**A refuted claim is DELETED unless it can be written as a guardrail** — *"do not change Z back to
+Y; Y silently loses W"*. If you cannot write that sentence, the old state goes. An earlier version
+of this document said a refuted claim should become a pointer, and that instruction is what turned
+`memory.md` into a changelog of old claims, corrections and pointers that every agent then paid for
+on every launch.
 
-### Phase 3 — Condense
+### Two sieves, and the first one alone will lie to you
 
-**Phases 1-3 move and merge; they do not shrink much.** Measured on the most chronicle-dense region:
-everything explicitly marked as history was **175 of 896 lines, 20%**. So a file that has grown too
-expensive is not fixed by tidying its writing — the rest only comes out by removing things it
-currently says.
-
-- **Be given a target COMPOSITION, not a target line count.** The remaining material has no
-  principled ordering among itself, so a number leaves you guessing which category to cut. "Keep the
-  looks-wrong-but-is-right entries and the operating procedure, drop the design rationale for things
-  nobody would simplify" is executable and checkable; "get to N lines" is not.
-
-⭐ **Phase 3 needs TWO sieves, and having only the first is the standard way a condensing pass
-stalls.** Established on the 2026-07-28 run, which reached 3,100 lines and then spent an hour finding
-almost nothing more to cut:
-
-1. **Necessary — is it one of the four things that earn a place?** (why / pitfall / the thing no
-   single file can show / just enough implementation to read those three.) This answers *may it be in
-   memory.md*.
-2. **Sufficient — if this line were not here, what actually happens?** This answers *does it earn the
-   space*, and the first sieve cannot:
-   - **Silent, unbounded, and paid by someone other than the person who caused it** → keep. An empty
-     text block bricks a session permanently and repair does not cover it. A fictional API rule got
-     four production mechanisms built against it.
+1. **Necessary** — is it one of the things that earn a place at all? (why we wanted it / how the
+   next person falls / what no single file can show / negative results / just enough implementation
+   to read those.) This answers *may it be in `memory.md`*.
+2. **Sufficient** — **if this line were not here, what actually happens?** This answers *does it
+   earn the space*, and the first sieve cannot:
+   - **Silent, unbounded, and paid by someone other than the person who caused it** → keep.
    - **Rings immediately, is visible on the spot, and only bites the person editing that code** →
-     cut, however true and however real the pitfall. **That is the definition of the "very very small
-     thing that reads like a code comment copied out here".** Whoever writes that test will discover
-     in thirty minutes that happy-dom does not dispatch keydown, and those thirty minutes are not
-     what this file exists to prevent.
+     cut, however true and however real the pitfall.
 
-**Negative results get the same second sieve; they are not exempt as a class.** *Expensive to
-re-derive AND the wrong conclusion is attractive* → keep (CoreML's NaN is not monotonic in input
-length, and a plausible length-threshold hypothesis would have shipped). *One command re-tests it and
-the entry itself says which command* → cut (`bun:sqlite` cannot `loadExtension`).
+**Applying sieve 1 alone produces a defensible, wrong "we cannot compress further".** Measured: a
+24-paragraph sample scored 18 keeps against sieve 1 and the curator reported the file was near its
+floor; under sieve 2 three whole blocks inside those 18 came out, and every one of them was a true
+pitfall and a genuine member of the four categories.
 
-⚠️ **Applying sieve 1 alone produces a defensible, wrong "we cannot compress further".** Measured on
-that run: a 24-paragraph sample scored 18 keeps against sieve 1, and the curator reported the file
-was near its floor. Under sieve 2 three whole blocks inside those 18 — a test environment's quirks, a
-markdown parser's grammar, and a list of compiler-and-linter gotchas — came out. **Every one of them
-was a true pitfall and a genuine member of the four categories.**
-- **Phase 1's `comm -23` invariant does not apply — you are deleting.** Its replacement is a
-  per-section disposition list in each commit message. That enumeration is the ONLY thing that keeps
-  the "destroyed by understanding" rot detectable from the inside.
-- ⚠️ **Sample your own marks before quoting them.** A curator marking their own entries as
-  must-keep overstates the protected share: measured, 20 self-marked items tested against the
-  criterion passed 11, borderline 3, **failed 5** — all five craft or method rather than
-  looks-wrong-but-is-right. About a third too high, in the direction that favoured the curator's own
-  position.
+**Negative results get the same second sieve and are not exempt as a class.** Expensive to re-derive
+AND the wrong conclusion is attractive → keep. One command re-tests it and the entry names the
+command → cut.
 
-### Phase 4 — Read through
+### Why the surgical route is no longer the method
 
-Connective repair only: transitions, pointers that no longer resolve, sections that now read as
-orphans. **No new merges** — note them and report instead.
+There used to be a four-phase procedure here — reorder, merge, condense, read through — checked by a
+set-difference (`comm -23`) invariant, per-region scripts and a section-by-section disposition list.
+**It worked twice, at a smaller size, and it stops working as the file grows**, for a reason worth
+stating plainly so nobody reinstates it:
 
-⭐ **Phase 4 must be done by an agent with a clean context, NOT by whoever did phases 1-3.** By the
-end of them you understand the material too well to see what is missing — which is precisely the
-mechanism behind the "destroyed by understanding" rot. The person best placed to finish is the
-person least able to.
+> **Surgery merges by SUBJECT. It cannot merge by CLASS, because the instances of a class are never
+> adjacent and never share wording.** So a competent surgical pass produces exactly what the
+> acceptance criterion calls failure: the same entries, arranged into a shorter directory.
 
-**This is the ONLY legitimate reason to hand this work over.** "Running low on context" is not one:
-context is a compaction boundary, not a deadline — a compacted agent continues with a summary, and
-both this file and `memory.md` survive compaction by construction. The compacted original therefore
-strictly dominates a replacement, who would re-read the same documents *without* the summary and
-without any tacit judgement. See `memory.md` § *Where agents predictably go wrong* #5. Phase 4 is different
-in kind: there, not knowing the material is the requirement, not the cost.
+Measured on one such pass: five subject merges took the merged regions down 22%, the other
+three-quarters of the file was untouched, and the whole file came out *longer* than it started
+because the understanding restored in step 1 exceeded what subject-merging removed.
 
----
+**The parts of that procedure that survive are demoted from METHOD to ACCEPTANCE.** The enumeration
+and the probes below are how you check a rewrite afterwards. They are not how you produce one.
 
-## Checks — run ALL of these after EVERY change, not just in phase 1
+## Acceptance — run these AFTER the rewrite
 
-Naming them "the phase-1 invariants" is how you switch them off at the moment they start mattering.
-In phase 1 the structural checks are cheap and useless (moving cannot break structure). In phases 2
-and 3 they are cheap and **necessary** (merging and deleting can).
+**The enumeration is the only CONTENT check, and every other check passing is what hides that.**
+Measured: a pass reported six checks green — region list, code fences, orphan headings, bold
+pairing, column widths, task-id count — and every one of them is STRUCTURAL. The disposition list is
+the only one that asks whether a fact survived, and skipping it left **nine accidental content
+losses** under an all-green report. That is `memory.md`'s own *a passing gate looks identical
+whether it read 8% or 100%*, wearing this document as its medium.
+
+**The mechanical form, because "list every section's disposition" reads like bookkeeping until you
+have a way to do it:** for each section of the OLD file, pull out every `**bold run**` over ~25
+characters and every backticked identifier, and check both against the new file.
+
+- **The bold runs are useless alone** — about 85% report "not verbatim", because rewriting rewords.
+- **The identifiers are the signal.** An identifier present before and absent after is either a
+  deliberate drop or an accident, **and separating those two is the entire point of the list.**
+  Measured ratio on one pass: **9 accidents to 1 deliberate drop.** In the diff they are
+  indistinguishable, and the deliberate one looks exactly as alarming as the accidents.
+
+**Expect roughly a third of probe hits to be line-wrap false positives** — a phrase that exists in
+the new file split across two lines. That is `memory.md`'s own *anything over ~60 characters needs a
+multiline search*, firing on the script written to verify it. Chase all of them anyway; the check
+that separates a wrap from a loss is one grep on a short fragment, and the one you skip is the one
+that was real.
+
+The structural checks, which are cheap and still worth running:
 
 ```bash
-# 1. information loss
-comm -23 <(sort BEFORE) <(sort AFTER)      # phase 1: empty. phases 2-3: enumerable.
-
-# 2. section conservation — catches a section absorbed into another
-grep -c '^## ' memory.md
-
-# 3. region conservation — DIFF THE LIST, don't count it
-diff <(git show <phase1-commit>:.mxd/memory.md | grep '^# ') <(grep '^# ' .mxd/memory.md)
-
-# 4. rendering integrity
-#    - code fences balanced (odd count = a stray fence, mis-nests the rest of the document)
-#    - no code block containing a heading line
-#    - no '#### ' without a '### ' above it in its section
-
-# 5. position-dependent prose — the one kind of rot MOVING creates
-grep -nE '(see|See|under|Under|per|Per|in) \*[A-Z]'   # named refs: resolve each against the heading list
-grep -nEi 'paragraphs? (down|up|below|above)|section (above|below)|next door|the (next|previous) section|the [A-Z][a-z]+ (section|region)'
+grep -c '^## ' memory.md                              # section conservation
+diff <(git show <base>:.mxd/memory.md | grep '^# ') <(grep '^# ' .mxd/memory.md)   # regions
+grep -c '^```' memory.md                              # fences must be even
+awk '/^### /{h3=1} /^#### /{if(!h3)print NR}' memory.md   # orphan h4
+grep -nEi 'paragraphs? (down|up|below|above)|section (above|below)|next door'      # positional prose
 ```
 
-Check 3 exists because of a real incident: a merge script swallowed an entire region heading and
-reparented five sections. `comm` showed the three divider lines as removed and they read as ordinary
-churn; section count was unaffected. **Only the structural count caught it, and only because it was
-still being run.** Diffing the list beats counting it — a count tells you something moved, the diff
-tells you what.
+**Position-dependent prose is the one kind of rot that MOVING creates**, so it is worth a pass of
+its own whenever material changes region. Two families, neither findable by grepping the names you
+moved: region-relative (*"written up under X in the Gates section"* — the section still resolves,
+the region it names is now wrong) and purely positional (*"three paragraphs down"*, *"next door"*,
+*"the section above"* — no name in them at all). Grep the position words, read every hit, and state
+the result either way; "checked, none crossed" is worth recording so the next pass does not
+re-derive it.
 
-⭐ **Check 5 is phase 1's OWN hazard, and it is the only one that is.** Every other check guards
-against something any phase can do. This one guards against something only phase 1 does at scale:
-**phase 1 is the only phase that changes POSITION, and position-dependent prose is the only prose
-that a change of position falsifies.** Two families, and neither is findable by grepping the names
-you moved:
-
-- **Region-relative** — "written up under *X* **in the Gates section**", "see *Y*, **Daemon
-  region**". The section name still resolves; the region it names is now wrong.
-- **Purely positional** — "the rule **three paragraphs down**", "the self-bootstrap warning
-  **below**", "**next door**", "the section **above**". These have no name in them at all.
-
-Both are the *invalidated* rot kind — true when written, falsified by a change somewhere else, and
-**re-reading the sentence cannot detect it**, because nothing about the sentence is wrong on its
-face. Measured on the 2026-07-27 run: moving one subsection broke exactly two references, one of
-each family, and a name-grep over everything that moved returned neither.
-
-**So grep the position words, not the moved names**, and read every hit — a grep gives you
-candidates, not verdicts. Most hits are figurative ("the task above", "the layer below") and are
-discarded in a second. Do this at the END of phase 1, before the commit, and state the result in the
-commit message either way; "checked, none crossed" is worth recording, because the next curator will
-otherwise re-derive it.
-
-### Check 6 — the BACKWARD identifier survey
+### The backward identifier survey
 
 Extract every backticked identifier `memory.md` names and check each against the source. The forward
-direction (*"I renamed something, let me grep the file"*) only fires when someone remembers; the
-backward direction needs nobody to remember, which is why it finds a different set. Measured
-2026-07-27 over 485 identifiers: 41 absent from the repo, most of them deliberate deletion records —
-and **four were live present-tense guidance naming something that no longer exists**. Each fails the
-same way: a reader greps it, gets nothing, and concludes the mechanism is gone.
+direction — *"I renamed something, let me grep the file"* — only fires when someone remembers; the
+backward direction needs nobody to remember, which is why it finds a different set. Measured over
+485 identifiers: 41 absent from the repo, most of them deliberate deletion records, and **four were
+live present-tense guidance naming something that no longer exists.**
 
-⚠️ **The endpoint of this survey is a DEFINITION, never another name.** The replacement you find in
-the source can itself be a phantom: one correction pointed at `wasReplaced`, which **also does not
-exist** — it appears three times, all in comments, while the real local is `notReplaced` and its
-polarity is the opposite. After finding a candidate, ask the same question again: does *this* one
-have a definition?
+- **The endpoint of this survey is a DEFINITION, never another name.** A replacement you find in the
+  source can itself be a phantom: one correction pointed at `wasReplaced`, which also does not exist
+  — it appears three times, all in comments, while the real local is `notReplaced` and its polarity
+  is the opposite. Ask the same question again of whatever you find.
+- **Plant a fake identifier in the input before believing the output.** A `while read` loop silently
+  dropped its final line, and the planted control caught it only because it was last. **Put the
+  control where truncation risk is highest.** A survey of 485 names that quietly checks 484 reports
+  exactly like one that checks all of them.
+- **A control must be able to FAIL for the reason you are testing.** A reviewer confirmed with a
+  positive control that grep could see a file's real exports, then reported two symbols as
+  fabricated — but the symbols were real and lived in a commit their branch had not merged, and the
+  chosen control existed in BOTH versions, so it could not separate "this symbol is absent" from "my
+  checkout is old". Pick a control present under one hypothesis and absent under the other.
+  Corollary: **prose on a branch can correctly point at code that only exists on `main` yet.**
 
-⚠️ **Plant a fake identifier in the input before believing the output.** On the first run a bash
-`while read` loop silently dropped its final line, and the planted control — added last — was the
-only thing that said so. A survey of 485 names that quietly checks 484 reports exactly like one that
-checks all of them. ⭐ **The control worked ONLY because it was last: put it where truncation risk is
-highest**, which for anything looping line by line is the final line.
+### The cold read, by somebody else
 
-⚠️ **A control must be able to FAIL for the reason you are testing.** A reviewer reported two symbols
-as fabricated, having first confirmed with a positive control that grep could see that file's real
-exports — sound method, wrong control. The symbols were real and lived in a commit their branch had
-not merged, and the chosen control existed in BOTH versions, so it could not separate "this symbol
-is absent" from "my checkout is old". **Pick a control present under one hypothesis and absent under
-the other.** Corollary for a repo worked on in parallel branches: **prose on a branch can correctly
-point at code that only exists on `main` yet**, and it reads as fabricated to anyone on the branch.
+The last step is a read-through by an agent with a clean context, **not by whoever did the
+rewrite.** By the end of it you understand the material too well to see what is missing, which is
+exactly the mechanism behind the "destroyed by understanding" rot. Its output is connective repair
+only — transitions, pointers that no longer resolve, sections that now read as orphans — and
+anything larger gets reported rather than done.
 
----
+**This is the ONLY legitimate reason to hand this work over.** "Running low on context" is not one:
+context is a compaction boundary, not a deadline, and both this file and `memory.md` survive
+compaction by construction, so a compacted original strictly dominates a replacement who would
+re-read the same documents without the summary and without any tacit judgement.
 
-## Scripts
+**Brief it on METHOD and forbid it every source of CONCLUSIONS** — the rewrite's commit message, the
+curator's session, and the previous cold read's report, which names specific paragraphs and would
+hand over its answers instead of letting the new reader reach their own. Extract the method yourself
+and put it in the description. **Its instinct will be to restore what looks missing, and that
+instinct is wrong at the measured deliberate-to-accidental ratio**, so state the ratio and make
+restoration out of scope: a report costs a paragraph, a wrong restoration is indistinguishable from
+a fix in the diff.
 
-Ephemeral, written per-region. The patterns matter, not the files.
+**What a cold read uniquely produces, measured on one run of a freshly rewritten file:** four
+connective repairs, of which **three were defects the rewrite itself had introduced** — a positional
+phrase written the same evening, a direction word whose nearest same-vocabulary heading was BELOW
+it, and a markdown break from the curator's own re-wrapper. **The curator cannot find these**,
+because each one was correct at the moment it was written and the curator is the person who wrote
+it. Its other output is a verdict nothing else can give: whether the file reads as one argument or
+as a collection, and — on that run — that the spine's citation traffic is **one-way**, so a reader
+entering at a subsystem meets a class name cold with no pointer back.
 
-**⚠️ The bug to not repeat.** Cutting a section by scanning to the next `## `:
+**Require three parts in the report, because the last two get skipped**: what changed; what was
+CHECKED AND NOT CHANGED, which is a real result that stops the next pass re-deriving it; and what it
+wanted to change but did not. Then own the report — see `01KYT7EYE951TPFSYRJ3QAH2F5`, because the
+findings a cold read uniquely produces are exactly the ones a later reorganisation does NOT
+regenerate, so an unowned report loses only the irreplaceable half.
 
-```ts
-// WRONG — swallows the region divider when the cut section is LAST in its region
-while (e < lines.length && !lines[e].startsWith("## ")) e++;
+## Judgement calls that keep coming up
 
-// RIGHT — stop at a divider too
-const isDivider = (i) =>
-  lines[i] === "---" && (lines[i + 1] ?? "").startsWith("# ") && lines[i + 2] === "---";
-while (e < lines.length && !lines[e].startsWith("## ") && !isDivider(e)) e++;
-```
-
-Three patterns cover everything:
-- `cut(titlePrefix)` — remove a whole section (with the guard above), trailing blanks trimmed.
-- `demote(block, newTitle)` — `## `→`### `, `### `→`#### `. **Required when folding**, or the
-  folded section's subheadings become siblings of their own parent.
-- `appendInto(hostPrefix, blocks)` — insert at the end of a host section, backing up over its
-  trailing blanks first.
-
-Recompute section indices after every splice — caching them across mutations silently corrupts the
-next lookup.
-
----
-
-## Judgement calls that came up, and how they were settled
-
-- **Batch labels are not subjects.** FIX-1…FIX-10, Task X, Task Y, P3 — a batch fixed a binary proxy
-  and a save button in the same pass. Dissolve by subject and retitle; nobody searches for "P3".
-- **Except when the batch IS the subject**: the dead-code sweeps have no subject other than "what we
-  deleted". Grouping those by process is correct — and worth flagging in the commit as the one
-  deliberate exception, so the exception does not erode the rule.
-- **Classify by conclusion, not by title.** "70K Post-Restart Cache Miss" is not a cache entry; its
-  conclusion is "`response.model` cannot be trusted".
+- **`memory.md` has a RATE, not a size, so a line-count target is the wrong instrument.** Measured:
+  sixteen sections dated one single day accounted for 1,784 of 7,617 lines, about 960 after being
+  rewritten at compressed density — one heavy day produces more than a 1,000-line target would allow
+  the whole file to be. What holds is a trigger, not a number: regenerate when a region passes a
+  size you re-derive each pass. **A target makes you stop at the number, and what gets cut is
+  whatever you happened to be reading last rather than whatever least deserved to stay.**
+- **Batch labels are not subjects.** FIX-1…FIX-10, Task X, P3 — dissolve by subject and retitle;
+  nobody searches for "P3". **Except when the batch IS the subject**: a dead-code sweep has no
+  subject other than what was deleted, and grouping those by process is correct.
+- **Classify by conclusion, not by title.** "70K post-restart cache miss" is not a cache entry; its
+  conclusion is that `response.model` cannot be trusted.
 - **Classify by who gets hurt.** The LLM facility's real warning is a duplication between two
-  provider files — that bites someone editing providers, not a plugin author.
-- **Keep evolution chains together even when different people drove them.** Grouping by "who drove
-  it" is grouping by history, which is what you are leaving behind.
-- A deletion record deserves re-verification: it is the entry most likely to have been quietly
-  undone. Also record the false positives you hit while checking (e.g. a deleted function still
-  appearing in comments that explain its deletion) — that is a negative result and it stops the
+  provider files — that bites whoever edits providers, not a plugin author.
+- **Keep evolution chains together even when different people drove them.** Grouping by who drove it
+  is grouping by history, which is the thing you are leaving behind.
+- **File a round's findings BY SUBJECT, not where the task lived.** A walker rewrite also produced
+  two lessons about mutation harnesses and one about how prose rots; filing all of it under the
+  walker buries the other two where only someone already reading about walkers will find them.
+- **A deletion record deserves re-verification** — it is the entry most likely to have been quietly
+  undone. Record the false positives you hit while checking, such as a deleted function still
+  appearing in the comments that explain its deletion; that is a negative result and it stops the
   next person reopening it.
-- **When a region checks out clean, say so IN the file**, dated and scoped ("verified <date>, skip
-  unless <file> moved"). Otherwise the next pass re-derives the same finding from scratch, which is
-  exactly the cost this exercise exists to remove. The file has almost no negative results; it
-  should have more.
+- **When a region checks out clean, say so IN the file**, dated and scoped. Otherwise the next pass
+  re-derives the same finding, which is exactly the cost this exercise exists to remove.
 - **Rot correlates with the gap between when a sentence was written and when the code under it last
-  moved** — not with the sentence's age alone. The newest region checked out entirely clean because
-  its entries were written by the same tasks, in the same sessions, as the code they describe. This
-  is why the oldest sections are worth reordering first: it front-loads the finds.
-- **"If code can answer it, point at it" is too narrow — it is any AUTHORITATIVE SOURCE.** Another
-  task's `done()` result, a config value, an upstream doc. The narrow reading is not hypothetical:
-  a hand-compressed copy of two task results was written into a task description — by someone who
-  had stated the rule that same day — because its perceived scope was "documentation vs code".
-- **A measurement as EVIDENCE can go; a measurement as a DEFENCE LINE must stay.** The older form of
-  this rule was "delete claims, keep measurements", justified by measurements not rotting — true,
-  and "does not rot" is not the same as "earns its place". The sharper test is: **if this number
-  were gone, would anyone make a different decision?**
-  - **Yes → keep.** `webgpu 909s wall / 38.8s CPU` against `cpu 697s / 3044s CPU` defends a
-    counter-intuitive choice (we ship the option that is 30% slower in wall-clock), and anyone
-    arriving to "optimise" it will pick cpu and starve the machine. The number is the only defence
-    that decision has. Same for the 628 mock-generated error strings.
-  - **No → delete the number, keep the conclusion.** `68,664 files → 320, 153ms → 0.4ms` defends
-    "prune at descent", and the sentence *"the walk now costs what the ANSWER costs"* already
-    defends it completely. The number proved the fix worked, and that the fix works is in the code.
-  - What still rots either way is the present tense. Date it, say what it measured, say where the
-    current value lives. ⭐ And a kept measurement survives best **folded INTO the guardrail it
-    evidences** — standing alone as its own paragraph it reads as trivia and is the first thing the
-    next pass deletes.
-- **File a task's findings BY SUBJECT, not where the task lived.** A round's output is rarely one
-  thing: a walker rewrite also produced two lessons about mutation harnesses and one about how prose
-  rots. Filing all of it under the walker buries the other two where only someone already reading
-  about walkers will find them — which is nobody. Splitting that round three ways cost 117 net lines
-  against the ~200 it would have taken as one appended section.
-- **Understating a security surface is worse than overstating it.** The auth middleware's skip list
-  was described twice, both times smaller than reality, because a later change (frontend paths
-  becoming server-visible) enlarged the anonymous surface without touching either auth entry. When
-  verifying anything about access control, check what is reachable, not just what the entry lists.
-
----
-
-## The 2026-07-30 run: restoring the CLASS NAME is a different axis from restoring the WHY
-
-The 2026-07-28 run restored **why we wanted this**, from task descriptions. This run was told to
-restore something else and it took a user correction to see that they are not the same job:
-
-> 不是因为你没有抄名字,是因为你没有【理解】。机制和理解是不一样的。我想问你你有没有提到一个叫做
-> race condition 的词?
-
-**A section can open with a perfect user quote about why the feature was wanted and still never say
-what KIND of thing it is describing.** The exemplar: `close_task` landing inside the launch window
-had a complete, correct timeline — hook order, seconds, which guard is missing — and the words *race
-condition* appeared nowhere in the file. Say them and the paragraph is readable at a glance; leave
-them out and every reader has to rebuild the concept from the sequence.
-
-⭐ **This gap has a cheap mechanical detector, and it is worth running FIRST because it costs one
-command and aims the whole pass.** Grep the file for the standard NAMES of phenomena and look for
-the ones at zero while the phenomenon is plainly described. Measured at the start of this run:
-`race condition` **0**, `TOCTOU` **0**, `time-of-check` **0**, `idempot*` **0**, `back-pressure`
-**0**, `off-by-one` **0** — against six paragraphs describing races and four describing an
-idempotence fix. Meanwhile `silent` appeared **122** times.
-
-> **That ratio IS the finding: the file reaches for the SYMPTOM it experienced (silent, quiet,
-> nothing goes red) far more readily than for the MECHANISM the reader needs to look up.** A symptom
-> is what the author lived through; a class name is what a stranger can search, recognise and
-> generalise from.
-
-⭐ **The direction of the loss is structural, which is why the tree can always repair it.** A task
-description is written BEFORE the work, while the author still holds the problem as a CATEGORY; the
-memory entry is written AFTER, while they hold the MECHANISM. So the reliable pattern is: task
-descriptions carry class names and field names are missing; memory entries carry field names and
-class names are missing. **Reading the two side by side is not a heuristic, it is the answer sitting
-in the other document.**
-
-⚠️ **Do not force a name where the record has none.** Naming is a hypothesis to be checked, and this
-repo has already paid for recognising a pattern that was not there (a set of PARTS of one design read
-as ENTRANCES to one rule, producing a patch nobody had chosen at a layer nobody had picked). When
-you cannot find the name, write "we have not named this class" and move on. Report retrieved and
-inferred separately, because they are not the same grade of evidence.
-
-### Two findings about the file's failure modes
-
-⭐ **Append distance is measured in the FILE, not in TIME.** The classic story here is that a
-correction lands far from the claim because months passed. Measured this run: two sections written
-**the same day by the same author**, seventy lines apart, carry the same four-row table and the same
-conclusion (`These env fixtures work by an accident of where the first await sits` and `A
-state-restoring fixture is only as wide as its callback's synchronous prefix`). Nothing about the
-elapsed time explains that. **What produced it is that the author was appending, and appending puts
-the new entry at the end rather than next to its sibling.** So the duplicate-detection pass cannot be
-scoped to "the old regions".
-
-⚠️ **90 of 130 sections carry no task id, so the archaeology has to be re-run from scratch every
-pass — and for a section whose vocabulary has since changed, it may not be re-findable at all.**
-The id is the only entrance to the full record. **Whenever a pass does the archaeology, leave the id
-behind**; it converts a search that may fail into a lookup that cannot.
-
-⭐ **A class name that appears in eleven sections and is defined in none is a missing SECTION, and
-that is the most reliable merge signal phase 2 has.** Two came out of this run — *two situations,
-one observation* (the same observation is consistent with two worlds: eleven instances, each
-argued in its own region, and the remedy stated in five different vocabularies) and *a stored
-explanation expires* (six instances inside one 24-hour window, six media, no cross-reference).
-**Neither was findable by reading for redundancy, because no two instances share any wording.** They
-were findable by asking what the sections were instances OF.
-
-### The enumeration is the only CONTENT check, and every other check passing is what hides that
-
-**Measured 2026-07-30, on this document's own procedure.** A merge phase landed five commits with
-empty bodies and reported six checks green: region list, code fences, orphan headings, bold pairing,
-column widths, task-id count. **All six are STRUCTURAL. The per-section disposition list is the only
-one that asks whether a fact survived** — so "all checks passed" was fully consistent with **nine
-accidental content losses**, which is this file's own *a passing gate looks identical whether it read
-8% or 100%* wearing the reorganization procedure as its medium.
-
-⭐ **The mechanical form that makes the enumeration cheap, since "list every subsection's
-disposition" reads like bookkeeping until you have a way to do it:** for each original section pull
-out every `**bold run**` over ~25 characters and every backticked identifier, and check both against
-the new file. **The bold runs are useless alone — about 85% report "not verbatim", because merging
-rewords.** The IDENTIFIERS are the signal: an identifier present before and absent after is either a
-deliberate drop or an accident, **and separating those two is exactly what the enumeration is for.**
-Ratio on this run: **9 accidents to 1 deliberate drop.** Without the list they are indistinguishable
-in the diff, and the deliberate one looks just as alarming as the accidents.
-
-⚠️ **A multi-edit repair script that aborts part-way leaves NO trace in the diff, and the natural
-follow-up makes it permanent.** A restore script here held two edits, threw on the second one's
-assertion, and — writing the file only at the end — landed NEITHER. The follow-up fixed the edit that
-had thrown and silently dropped the one that had not, so a paragraph reported as restored was still
-missing two hours later. **Re-run every edit in an aborted script, not the one that failed, and
-verify a restore by grepping for the restored token rather than by the script exiting 0.**
-
-⭐ **Line-wrap false positives are the majority of what a token probe reports, and they are not
-noise to suppress.** Of eleven candidates, three were phrases that exist in the file split across two
-lines — this file's own *anything over ~60 characters needs a multiline search*, firing on the
-verification script written to check it. Expect roughly a third, chase all of them anyway: the check
-that separates a wrap from a loss is one `grep` on a short fragment, and the one time you skip it is
-the one that was real.
+  moved**, not with the sentence's age. A region whose entries were written by the same tasks, in
+  the same sessions, as the code they describe can check out entirely clean while being the newest.
+- **"If code can answer it, point at it" is too narrow — it is any AUTHORITATIVE SOURCE**, including
+  another task's result round, a config value, an upstream doc.
+- **Understating a security surface is worse than overstating it.** An auth skip list was described
+  twice, both times smaller than reality, because a later change enlarged the anonymous surface
+  without touching either entry. Check what is reachable, not what the entry lists.
 
 ## What a run produces
 
 Two things, and the second is the more valuable:
 
-1. A reorganized file.
-2. Everything learned about **how this file fails** — which belongs in `memory.md` §
-   *Writing This File*, because it applies to every entry written between reorganizations.
+1. A regenerated file.
+2. **Everything learned about how this file fails**, which belongs here, because it applies to every
+   entry written between regenerations.
 
-A forced enumeration is a **forcing function, not a document**: its value is realized while you
-write it. In the first run, both curator mistakes were caught by writing the disposition table, not
-by re-reading. Budget for the write-up before you run out of room; a handoff written at the edge of
-exhaustion is exactly the artifact that most needed the care.
+The enumeration is a **forcing function, not a document**: its value is realised while you write it.
+Budget for the write-up before you run out of room — a handoff written at the edge of exhaustion is
+exactly the artifact that most needed the care.
+
+## What the first whole-rewrite run taught
+
+Measured on the run that replaced the surgical route: **5394 -> 4225 lines, 64044 -> 49299 words**,
+one read in, one write out.
+
+**The acceptance instrument depends on which method produced the output, and reaching for the wrong
+one is the default.** The surgical era's probe was sentence identity — take high-information
+sentences from the input, ask whether each still appears — and under surgery that works, because
+surviving text is verbatim. **Under a rewrite every sentence is reworded, so the same probe reports
+~100% LOST and carries no information at all.** It fails loudly rather than silently, which is the
+one mercy; the real hazard is tuning it until it goes quiet.
+
+**Two probes, and neither finds what the other finds.**
+
+- **The token probe finds lost FACTS.** From the input pull every backticked identifier, every
+  number of three or more digits, every all-caps word, every CJK run; check presence in the output.
+  Yield on this run: **1347 / 145 / 519 / 22 candidates, ~190 flagged, 9 real losses.**
+- **The coverage probe finds lost SUBJECTS.** For each section of the input, name two or three
+  distinctive strings that must survive SOMEWHERE, and check the whole output — not the matching
+  heading, which a rewrite has usually renamed or dissolved. This run: **67 of 67 subjects clean**,
+  while the token probe was still finding real losses inside them.
+
+**Do not carry the surgical pass's accident-to-drop ratio across as a prior — it inverts.** There it
+was 9 accidents to 1 deliberate drop. Under a rewrite it is roughly 180 deliberate to 9 accidental,
+because dropping implementation detail is what the rewrite is FOR: test-file names that are not
+themselves the reference, mock names, model-name examples, SDK internals, reason-string constants
+whose rule survives. **So the work is adjudicating ~190 items to find 9, and the 9 do not stand
+out.** Budget for it, and write the deliberate drops into the commit message — an unexplained
+absence and a considered one are identical in a diff.
+
+**Match CJK fragments with whitespace stripped, not collapsed.** A CJK run has no spaces of its own,
+so the hard wrap breaks it mid-phrase and a flatten-to-single-space comparison misses it: 4 of this
+run's 5 CJK "misses" were wrap artifacts and one was real. Same class as the third-of-all-hits wrap
+false positives above, at 80% rather than 33%.
+
+**A mechanical re-wrap is provable, which is what makes it worth doing at the end.** Strip all
+whitespace from input and output and assert byte equality, then assert the counts of headings, table
+rows and code fences are unchanged. **The trap is that blockquote `>` prefixes MOVE under a
+re-wrap**, so a whitespace-only strip is not invariant and the assertion fires on a correct
+transform — normalise leading `>` away as well. Result here: 529 over-wide lines to 0, content
+proven identical.
+
+Four things about writing that re-wrapper, all of which cost a cycle:
+
+- **The marker set is not what both documents said it was, and the missing member shipped a bug the
+  cold read caught.** It is `>`, `|`, `#`, `-`, `=` **and a number followed by `.` or `)` AND A
+  SPACE.** A sentence ending *"its message described 14."* put `14. ` at line start, which became an
+  ordered-list item that swallowed the next four lines and left the sentence with no object — while
+  `1.58M.` and `0.02s` in the same file are harmless, because the trailing space is the whole rule.
+- **Its two rules fight.** *No continuation line may begin with a marker* is fixed by pulling a word
+  down from the previous line, which then makes that line overlong. Chasing both in code loops; the
+  cheap fix is to edit the TEXT so the offending token is not marker-initial (`#14876` became
+  `(#14876)`).
+- **A paragraph accumulator that stops at `#`-initial lines will split a paragraph at exactly the
+  defect you are hunting**, and it is content-preserving, so no assertion fires and the tool hides
+  the bug from itself.
+- Do not treat "near 100 columns" as satisfied by 105. Wrap to a hard bound and the check is binary.
+
+**After hoisting classes into a spine chapter, verify the pointers resolve.** Every `*Class name*`
+reference must match a real heading — 20 of 20 here. This is the only check that tests whether the
+hoist WORKED rather than whether text moved. **Do not try to extract the pointers with a regex over
+italics**: the file's emphasis style and its pointer style are the same syntax, so a naive sweep
+returned 457 candidates of which 8 were pointers. Check a named list you wrote deliberately.
+
+**And the probe is an instrument.** This run's coverage probe required ALL of a section's strings to
+be present when the intent was ANY, and reported one false loss — in a run whose entire subject was
+that a green report proves nothing about what was read.
+
+### The token probe is PER-SITE, so a correct drop can orphan a surviving use
+
+**This is the failure mode of the adjudication the 180-to-9 ratio describes, and it means the 9
+accidents are not the only cost of the 180 deliberate drops. Each deliberate drop is also a
+candidate ORPHANING.**
+
+Worked instance from this run, found afterwards by somebody else. A model codename appeared twice,
+about a thousand lines apart. One site GROUNDED it — a sentence naming the model whose behaviour
+prompted a feature. The other DEPENDED on it — a scope note reading *"this is X-class behaviour"*,
+which is only meaningful to a reader who has met X. The rewrite generalised the grounding site,
+which was correct in isolation and correct by this document's own list, since model-name examples
+are exactly what a rewrite is supposed to drop. It kept the dependent site byte-identical.
+
+**Neither half of the probe could see the result.** The dropped token fired, was adjudicated, and
+the adjudication was right about the site it was looking at. The dependent site was never flagged,
+because that site lost nothing — it is unchanged. **The probe asks "present before, absent after" of
+one identifier at a time, and an orphaning is a relation between two sites.**
+
+The check that closes it is cheap and belongs in the adjudication loop rather than after it:
+
+> **For every identifier you are about to record as a deliberate drop, take its FIRST alphabetic run
+> and grep the OUTPUT for it, case-insensitively.** `fable-5` dropped, `Fable` survives, one hit,
+> one pass.
+
+**First run, not longest — this rule was written as "longest" and measured wrong within the hour.**
+`gpt-4.1-mini` gives `mini`, `sk-ant-` gives `ant` at 178 hits, `codex-auto-review` gives `review`.
+**The longest run is routinely the least distinctive part of a name; the first run is the family.**
+The failure direction matters more than the error: a check that answers 178 for a name with no
+surviving use is not a false positive anyone argues with, it is noise, and noise is what gets a
+check abandoned rather than fixed.
+
+**It matters for NAMES, not for symbols.** A dropped symbol usually still has a definition in the
+source, so a surviving use remains resolvable by the reader. A codename, a vendor generation, a
+project or an incident name has no definition anywhere but this file — so deleting its only
+introduction leaves every other use permanently unreadable, and nothing in the file or the repo can
+repair it.
+
+**The repair is not to define the term.** Grounding it again re-adds the very material the drop
+correctly removed. Three options in order of preference: **cite the TASK that defines it**, which
+costs one bracket and is what this document already tells you to do with an id; restore just enough
+at the SURVIVING site to make the sentence stand alone; or delete the clause that depends on it.
+Prefer deletion over a definition when the paragraph itself calls the mechanism dormant, because a
+definition maintained for a dormant mechanism is a line paid for on every launch forever. **When you
+cite, say what the task GROUNDS** — a draft that never ran defines a name and a symptom and settles
+no measurement, and the search-hit vocabulary exists precisely to stop a proposal reading as a
+record of work.
+
+**And run the orphan check over the REPAIR, not only over the original.** The clause rewritten to
+ground one name here contained a SECOND ungrounded name, in the same sentence, written while
+thinking about grounding — it reads as context rather than as the same bug, because the author is
+attending to the defect they just fixed. `memory.md` carries the general form under *a source audit
+written in the same commit as its fix*: a repair manufactures false positives AND true positives
+nobody re-runs the instrument over.
+
+### The identifier is not the best anchor available. It is the ONLY one
+
+**Ask the rule question, not the token question — and the reason you cannot simply ask it everywhere
+is a measurement, not an excuse.** The caps failure was a substitution: testing *is this token
+needed* where the question was *does the rule this token carried survive*. The obvious correction is
+to check every rule directly. **It is not mechanizable.**
+
+| long bold spans (>=40 chars) | count |
+|---|---|
+| in the input | 1201 |
+| in the output | 893 |
+| surviving VERBATIM | **188 — 16%** |
+
+This file already predicted that number from the other side (*"the bold runs are useless alone —
+about 85% report not verbatim, because rewriting rewords"*). Read forwards it says something
+stronger: **a rewrite rewords 84% of its own rules, so no probe can ask whether a rule survived. The
+identifier is the only anchor that survives rewording, so the dropped identifiers that sat inside a
+bold span are not a subset you settled for — they are the ENTIRE mechanically-adjudicable
+population.** Measured on this run: 175 dropped identifiers, **103** inside a bold span, and that
+set arrives with the rule text attached, so adjudicating it is reading one sentence each.
+
+> **Everything outside those 103 is reachable by no probe anybody can write. It is reachable only by
+> somebody reading.** That is the argument for the cold read being a STEP rather than a courtesy,
+> and it is also why an unowned cold-read report loses the only coverage that set ever gets.
+
+**Yield of the bold-span pass, so the next run can price it:** nine further losses on top of the
+nine the token probe found, one of which is a rule of its own and is stated below.
+
+**State the yield with a SCOPE CLAUSE naming what was adjudicated at rule granularity, because a
+count in a result round is read as a completed measurement.** This run reported *"9 real losses, all
+restored"*, honestly, and it was 18 within the hour. The honest form is *N losses found, from
+token-level adjudication of identifiers/numbers/CJK and rule-level adjudication of nothing.*
+
+**And record an inconsistency you find in the INPUT as inherited, explicitly.** A rewrite is the
+obvious suspect for every inconsistency discovered after it, so *"this was already in the input"*
+costs one clause and stops a future pass paying to re-investigate work that was faithful.
+
+### Compressing a list of NEGATIVES inverts it. It does not weaken it
+
+A negative-results list exists to stop somebody spending an afternoon, so **its promise is
+EXHAUSTION** — and that is the one place where dropping a member does not cost a little coverage, it
+reverses the entry.
+
+Measured instance. The input read *"NEGATIVE RESULTS on the CoreML knobs, so nobody spends the
+afternoon again: `mlComputeUnits: CPUOnly`/`CPUAndGPU`, `modelFormat: MLProgram`,
+`allowLowPrecisionAccumulationOnGPU` — every one still NaN"*, followed by a parenthetical:
+**`coreml` plus `dtype: "fp16"` IS clean, it changes no decision because fp16 doubles the weights,
+and `webgpu` plus `fp16` does not even load.** The rewrite kept the list and dropped the
+parenthetical.
+
+> **The list now enumerates every knob that fails and omits the only one that works. It does not
+> merely fail to prevent the afternoon — it AIMS the reader at it**, because the single experiment
+> left unmentioned is the one a reader tries next, and the surrounding sentence promises that trying
+> it is unnecessary. *The promise was kept and the exception that made it true was deleted.*
+
+**It will look safe to the next curator for the same reason it looked safe here.** An exception
+inside a list of failures reads as a qualification of a point already made, and every other kind of
+list in this document really does compress by dropping its weakest member. **Before shortening any
+list, ask what its promise is. Where the promise is "these are all of them", it cannot be shortened
+at all** — only replaced by a shorter list that is still complete.
+
+### Symptom scarcity is a standing property of this file, not one curator's slip
+
+The 2026-07-25 cold read measured **4 explicitly symptom-form entries in 81 sections, none in the
+first 700 lines** — in a document that states its own access pattern as organised by cause and
+queried by symptom. That finding was never actioned, and **the rewrite in between deleted another
+one**: the user-visible symptom of connector-text summarization, *the user's reply vanishes into the
+thinking fold*, went while the mechanism survived in full. Two independent passes, and it got worse
+across the pass between them.
+
+> **A symptom looks most redundant exactly when you have finished understanding its mechanism. So
+> the moment you are best qualified to curate a section is the moment you are least able to keep its
+> retrieval key** — which is why this cannot be fixed by curating more carefully, and has to be
+> checked for by name.
+
+The reader arrives holding *"my reply disappeared into the thinking fold"*, never *"connector text
+is summarized server-side"*. **Count the symptom-form entries after a rewrite and state the
+number.**
