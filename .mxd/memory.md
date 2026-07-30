@@ -4026,3 +4026,72 @@ test may replace it, including with `[]`. Answering whatever model it is asked a
 deleted default back inside the harness, where nothing could ever go red. **And four hand-written
 copies of the SDK client stub lived in one test file**, none of them able to answer `models.list`;
 they are now one `createMockAnthropicClient`. Four copies of a fake is four places to miss one.
+
+## A credential someone else rotates is READ at every use — a copy is a second claimant
+
+**DECIDED 2026-07-29 (user): *"把 config 做成,api key,没有别的选项。access token 和
+ref token 选项去掉。换成 auth.json path"*.** An OpenAI auth group now holds `apiKey`
+**or** `authJsonPath` — a path to the `auth.json` the codex CLI maintains, which we only
+ever read. `accessToken`, `refreshToken` and `accountId` are gone from config; the account
+id is read out of the file.
+
+**The reason is ownership, and it is what makes the design non-obvious.** OpenAI **rotates** the
+refresh token on every refresh, invalidating the previous one. So two copies of the pair are not
+one live value and one going stale — they are two claimants to a single chain, and whichever
+refreshes first turns the other into waste paper. Measured on this machine: our config's copy and
+codex's file held **different** access AND refresh tokens, both dead. **So "read the file" is not
+the lazy option, it is the only correct one: the chain belongs to codex, we are a reader.** Its
+corollary is what a future change will get wrong: **an expired token is an ERROR with an
+instruction, never something we refresh** — refreshing means writing the file, and rewriting it
+from anything we hold discards the tokens codex just wrote.
+
+⚠️ **CORRECTION to *The two providers*, which says both stored OpenAI credentials had expired,
+`~/.codex/auth.json`'s on 2026-01-19, and that "nothing refreshes them either".** The second half is
+false and the first is stale: **codex refreshes that file, and did so at `2026-07-30T00:01:10Z` —
+one minute after the task to stop copying it was filed.** With a live token the codex endpoint
+answers 200, so the provider is no longer unreachable; what remains true, and is the part that
+sentence was really carrying, is that **we do not bootstrap on OpenAI, so nothing there is corrected
+by traffic.** (`void this.refreshToken` is gone too — the provider holds a credential SOURCE.)
+
+⭐ **The transferable half is about the reading, not the file.** That 2026-01-19 was measured and
+true when taken, and it was passed forward twice — into a task description and then a briefing
+— as a current fact, *inside an argument about the file self-rotating*. **A reading of a
+self-rotating value has a shelf life by construction, so quoting one as ground truth is a category
+error however carefully it was measured.** The rule that falls out and is worth applying to any
+externally-owned state: **no reading of such a file may survive as a constant, a cached value, or a
+comment stating a date** — including a fresh one. Ask the file.
+
+⚠️ **`ChatGPT-Account-Id` is MEASURED not required for codex `/models`** (200 with and without,
+byte-identical; 401 with no `Authorization` as the positive control). It is still sent, because
+codex sends it and the **responses** path was never probed without it. ⭐ **The first 2×2 said
+the opposite and the ORDER CONTROL killed it**: `/models/catalog` answered 403 (an HTML block page)
+without the header and 404 with it, which reads exactly like a header requirement — reversing the
+order moved the 403 onto the with-header call, then both settled at 404. **A first-hit edge block
+and a real header requirement are indistinguishable in the payload; only the permutation separates
+them.**
+
+⚠️ **The compiler found 8 files; a whole-tree grep found 5 more, and the loudest was a UI
+with three live inputs for fields that no longer existed.** `web/` cannot import
+`src/config.ts` (asserted
+plugin boundary), so `web/components/SettingsPanel.tsx` declares its OWN copy of the auth-group
+shape — deleting three fields from the real type produced **zero** errors there while two password
+inputs went on collecting them, plus **12 orphan i18n keys** across two files × two locales. **That
+8:5 ratio is the entry: the typed half and the by-name half are the same order of magnitude here,
+and only one of them reddens.** Filed as `01KYRD9GS9HCW8145H5C5ES6MZ`.
+
+**Two smaller decisions that will look arbitrary.** A path is **never masked** — `authJsonPath` is
+not a credential, the secret never enters config, and which file you pointed at is the one thing the
+settings row exists to tell you; so `maskAuthGroup` and the CLI both leave it verbatim, and the test
+pins the *absence* of masking. And `readCodexAuth` **expands a leading `~/`**, because the
+documented location is `~/.codex/auth.json` and neither place a user types it — a settings text
+field, a JSON config file — goes through a shell; without expansion the error quotes back the
+exact string they typed, which looks correct.
+
+**NEGATIVE RESULT — codex `/models` does not answer `fetchOpenAIModels`, so fixing the credential
+did NOT make the context-window path work for that endpoint.** Four mismatches (`client_version` is
+a required query param; envelope is `{models}` not `{data}`; entries keyed `slug` not `id`; window
+is `context_window` not `max_input_tokens`/`context_length`), plus a fifth that is a design
+question: **`client_version=0.50.0` returns 200 with an EMPTY list** — a third state between
+"answered" and "refused" that `src/context-window.ts`'s thesis has no slot for. All 7 models report
+`context_window: 272000`, independently confirming the 272,000 already recorded for GPT-5.5 here.
+Filed as `01KYRD862V1JCXNHJ3YZDR3KCH`.
