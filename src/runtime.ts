@@ -198,10 +198,20 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 			const baseURL =
 				authGroup?.provider === "anthropic" ? authGroup.baseUrl : undefined;
 
+			// ⚠️ Every credential slot named in every branch, unused one `null`. The
+			// third of the three sites that hand-build an Anthropic client, and the
+			// one where getting this wrong hurts most: this handler backs the
+			// Settings "check model" button, which is what a user reaches for while
+			// diagnosing exactly this failure. An `undefined` slot is read from env
+			// by the SDK, and a client holding both credentials sends both
+			// `x-api-key` and `authorization`, which the API rejects — so a shell
+			// key used to make this button report that the configured OAuth token
+			// was bad. See anthropic-compatible-provider.ts's constructor.
 			let client: Anthropic;
 			if (useOAuth) {
 				client = new Anthropic({
 					authToken: oauthToken,
+					apiKey: null,
 					...(baseURL ? { baseURL } : {}),
 					defaultHeaders: {
 						"anthropic-beta": "oauth-2025-04-20",
@@ -210,10 +220,15 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 			} else if (apiKey) {
 				client = new Anthropic({
 					apiKey,
+					authToken: null,
 					...(baseURL ? { baseURL } : {}),
 				});
 			} else {
+				// Nothing configured: the check reports an error naming the missing
+				// credential, rather than silently testing the shell's.
 				client = new Anthropic({
+					apiKey: null,
+					authToken: null,
 					...(baseURL ? { baseURL } : {}),
 				});
 			}

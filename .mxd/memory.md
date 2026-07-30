@@ -4336,6 +4336,26 @@ read the constructor of whatever we hand it to.
 hand-matched copies; the standing warning about them is above and it is now load-bearing for a
 correctness property, not just for beta headers.
 
+⚠️ **`check_model` is where getting this wrong hurt MOST, and "it shares the bug" understates it.**
+It backs the Settings *check model* button — what a user presses precisely while diagnosing
+this failure — so it did not merely fail too, it **actively misdirected**: reproduce the
+both-headers rejection and report that the OAuth token the user had just configured was bad. The
+other two sites at least fail where the work is. **When ranking doors, ask which one someone
+arrives at while already confused.**
+
+⭐ **How that door came to be missing from the task description, worth more than the door: the list
+was built by grepping `new Anthropic` in the two files already open, then written as a table — and a
+grep of the files you are editing is not a population.** THIS FILE already named the third site, in
+the standing warning above, put there by a commit whose own message says the previous note claiming
+two was wrong. **The record was consulted-able and was not consulted**, which is the same shape as
+`get_tree`-instead-of-`search_tasks` in a different medium. Cheap detector, and it is the question
+the grep cannot answer: *what would tell me this list is complete, other than the list?*
+
+⚠️ **A side effect worth knowing on its own: `check_model`'s only test accepted `ok` OR `error`, so
+on a machine whose shell held `ANTHROPIC_API_KEY` it made a REAL call to `api.anthropic.com` during
+`bun test` — and passed either way.** An either-way assertion cannot tell a hermetic run from a
+networked one. The new sentinel asserts **zero requests left the process**, which can.
+
 **Behaviour change, intended: with no credential configured the client holds none**, so the SDK
 throws *"Could not resolve authentication method…"* before it builds the request, instead of quietly
 running on the shell's key. Same trade as deleting `DEFAULT_MODEL` — an unconfigured value became

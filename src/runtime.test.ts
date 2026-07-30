@@ -11,9 +11,14 @@ import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { isDescendantOf } from "./task-utils.ts";
+import { withClientEnv } from "./test-utils/anthropic-client-env.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { initTestProject } from "./test-utils/init-test-project.ts";
-import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
+import {
+	attachMockSession,
+	initMockResourceRegistry,
+	TEST_CONFIG,
+} from "./test-utils.ts";
 import { executeTool } from "./tool-execution.ts";
 import type {
 	AgentResult,
@@ -156,6 +161,109 @@ describe("daemon health", () => {
 			expect(typeof m.model).toBe("string");
 			expect(typeof m.latencyMs).toBe("number");
 		}
+
+		await rm(dataDir, { recursive: true, force: true });
+	});
+
+	// The third site that hand-builds an Anthropic client. The two above it are
+	// pinned in anthropic-compatible-provider.test.ts and llm.test.ts under "a
+	// shell credential cannot reach the API"; the argument for why the env has to
+	// be pinned var-by-var, and why the header set is the discriminating
+	// observable, is written out in the first of those.
+	//
+	// ⚠️ This is also what made the test above accidentally non-hermetic: it
+	// accepts `ok` OR `error`, so on a machine whose shell held ANTHROPIC_API_KEY
+	// it made a REAL call to api.anthropic.com during `bun test` and passed
+	// either way. Zero requests is the assertion that can tell those apart.
+	test("check_model with nothing configured makes no request, whatever the shell holds", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-health-model-env-"));
+		const { app } = createApp({ dataDir, agentProvider: mockProvider });
+
+		const original = globalThis.fetch;
+		let requests = 0;
+		globalThis.fetch = (async (
+			input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
+			requests++;
+			void new Request(input, init);
+			return new Response("{}", { status: 200 });
+		}) as typeof globalThis.fetch;
+		let body: HealthResponse;
+		try {
+			const res = await withClientEnv(
+				{
+					ANTHROPIC_API_KEY: "sk-ant-shell-key-should-never-be-sent",
+					ANTHROPIC_AUTH_TOKEN: "shell-auth-token-should-never-be-sent",
+				},
+				() => app.request("/health?check_model=true"),
+			);
+			body = (await res.json()) as HealthResponse;
+		} finally {
+			globalThis.fetch = original;
+		}
+
+		// Nothing was attempted on the shell's credentials…
+		expect(requests).toBe(0);
+		// …and the check says so, naming what is missing.
+		expect(body.model?.status).toBe("error");
+		expect((body.model as { status: "error"; error: string }).error).toContain(
+			"Could not resolve authentication method",
+		);
+
+		await rm(dataDir, { recursive: true, force: true });
+	});
+
+	// The branch whose breakage was the user-visible one: a configured OAuth
+	// group plus ANTHROPIC_API_KEY in the shell used to send both credentials,
+	// which the API rejects — so this button reported that the OAuth token the
+	// user had just configured was bad.
+	test("check_model on an OAuth group sends only authorization, never the shell's key", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-health-model-oauth-"));
+		const { app } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+			initialConfig: {
+				...TEST_CONFIG,
+				authGroups: {
+					probe: {
+						provider: "anthropic",
+						oauthToken: "configured-oauth-token",
+					},
+				},
+				defaultAuth: "probe",
+			},
+		});
+
+		const original = globalThis.fetch;
+		const sent: Record<string, string>[] = [];
+		globalThis.fetch = (async (
+			input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
+			const headers: Record<string, string> = {};
+			new Request(input, init).headers.forEach((v, k) => {
+				if (k === "x-api-key" || k === "authorization") headers[k] = v;
+			});
+			sent.push(headers);
+			return new Response(
+				JSON.stringify({
+					type: "error",
+					error: { type: "invalid_request_error", message: "probe" },
+				}),
+				{ status: 400, headers: { "content-type": "application/json" } },
+			);
+		}) as typeof globalThis.fetch;
+		try {
+			await withClientEnv(
+				{ ANTHROPIC_API_KEY: "sk-ant-shell-key-should-never-be-sent" },
+				() => app.request("/health?check_model=true"),
+			);
+		} finally {
+			globalThis.fetch = original;
+		}
+
+		expect(sent).toEqual([{ authorization: "Bearer configured-oauth-token" }]);
 
 		await rm(dataDir, { recursive: true, force: true });
 	});
