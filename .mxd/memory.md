@@ -4184,3 +4184,42 @@ check that cries on every commit gets read as wallpaper within a day.
 purpose** — `installTrailerHook` takes a mutation that strips one flag from the shipped script,
 leaving the code under test verbatim. A check for an unknown FOURTH cause cannot be tested any other
 way, and a fixture-local reimplementation would have passed against a broken hook.
+
+## ⚠️ The SDK reads the credential env itself, so deleting our fallback did not stop a shell key
+
+**CAVEAT to *The model and the credential are chosen, never defaulted*, not a contradiction of it:
+deleting our `?? process.env.ANTHROPIC_API_KEY` did NOT stop a shell-held key from reaching the
+API.** The Anthropic SDK is a second reader of the same variable — its constructor does
+`if (apiKey === undefined) apiKey = readEnv('ANTHROPIC_API_KEY')`, and the same for
+`ANTHROPIC_AUTH_TOKEN`. So with zero env reads left in `src/`,
+`new AnthropicCompatibleProvider(model, {})` still yields a client whose `apiKey` is whatever the
+shell holds. **What the deletion actually removed is the BRANCH CHOICE**, and that is the part worth
+defending: a truthy `apiKey` sets `useOAuth = false`, so before the deletion an ambient key silently
+outranked the OAuth token the user had configured.
+
+⭐ **So the obvious sentinel for that deletion is VACUOUS, and it looks like the careful test.** Set
+`ANTHROPIC_API_KEY`, construct with empty opts, assert `client.apiKey` is not the env value: it
+fails TODAY, and its inverse passes under the restored fallback too — the two worlds are
+byte-identical at that observable. **A second producer downstream of the one you deleted destroys
+the observable you would naturally assert on**; you have to find one that still differs, which here
+is the collision fixture — env key vs a CONFIGURED `oauthToken`, asserting the configured one won
+and the OAuth beta header is present. Measured: that reddens on the apiKey line alone, and a
+`CLAUDE_CODE_OAUTH_TOKEN` sentinel reddens on the oauth line alone. `git log -S` is what tells you
+which names were ever yours: 15 commits touched `ANTHROPIC_API_KEY`, and **`ANTHROPIC_AUTH_TOKEN`
+has ZERO — it was never ours, it is the SDK's, and a sentinel claiming we ignore it would assert
+the opposite of measured reality.**
+
+⚠️ **An env sentinel must DELETE its sibling credential vars, not just set the one under test —
+measured false-green otherwise.** With both `??`s restored (the shape a real revert has, since the
+two lines went together) and the delete-loop removed, the `CLAUDE_CODE_OAUTH_TOKEN` test **PASSES**
+on a machine whose shell holds `ANTHROPIC_API_KEY`, because `useOAuth = Boolean(oauthToken &&
+!apiKey)` and the ambient key suppresses the branch being watched. With the loop, it fails. **A
+fixture's redness must not depend on whose shell it ran in** — and matrix developers plausibly do
+hold that variable, so this is the normal case rather than the exotic one.
+
+**Two smaller things this cost, both cheap to re-pay.** The Anthropic no-credential branch neither
+warns nor throws — it builds a credential-less client — so the OpenAI sentinel's `console.warn`
+hook does not transfer, and the signal has to be which credential the client ended up holding.
+And a negative assertion on a header (`not.toContain("oauth-2025-04-20")`) passes just as happily
+on a header you failed to READ, so it needs a positive control beside it asserting a beta feature
+that is always sent; verified by making the accessor path wrong and watching the control fire.

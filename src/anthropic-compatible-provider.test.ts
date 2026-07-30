@@ -5175,16 +5175,22 @@ describe("the deleted credential env fallbacks stay deleted", () => {
 	 * Run `fn` with exactly `vars` set among the credential env names — every
 	 * other one deleted — restoring all of them afterwards on every path.
 	 *
-	 * Deleting the ones we are not setting is not tidiness. The restored
-	 * fallback computes `useOAuth = Boolean(oauthToken && !apiKey)`, so a
-	 * developer whose shell holds ANTHROPIC_API_KEY would suppress the OAuth
-	 * branch and the mutation would leave these tests GREEN on their machine. A
-	 * fixture has to pin every input the branch reads, or its redness depends on
-	 * whose shell it ran in.
+	 * Deleting the ones we are not setting is not tidiness, and it is MEASURED
+	 * rather than reasoned: with both `??`s restored — the shape an actual revert
+	 * of 289a3bf2 has, since the two lines went together — and this loop removed,
+	 * the CLAUDE_CODE_OAUTH_TOKEN test PASSES on a machine whose shell holds
+	 * ANTHROPIC_API_KEY, and fails with the loop in place. `useOAuth =
+	 * Boolean(oauthToken && !apiKey)`, so an ambient key suppresses the branch
+	 * the test is watching for. (Restoring only the oauth line is red either way,
+	 * because then nothing reads ANTHROPIC_API_KEY at all.) A fixture has to pin
+	 * every input the branch reads, or its redness depends on whose shell it ran
+	 * in — and matrix developers plausibly do hold that variable.
 	 *
 	 * Restoring is equally load-bearing in the other direction: a leaked
 	 * ANTHROPIC_API_KEY pollutes every later test that builds an Anthropic
-	 * provider, in the direction that makes them look like they work.
+	 * provider, in the direction that makes them look like they work. Verified
+	 * both ways — absent before stays absent after, and a pre-existing value
+	 * comes back byte-identical.
 	 */
 	function withCredentialEnv<T>(
 		vars: Partial<Record<(typeof CREDENTIAL_ENV)[number], string>>,
@@ -5229,6 +5235,9 @@ describe("the deleted credential env fallbacks stay deleted", () => {
 		// The env value never landed as a credential…
 		expect(authToken).not.toBe("sk-ant-oat-env-should-be-ignored");
 		// …and the OAuth branch was never entered, which is what reading it does.
+		// Positive control first: without it, `not.toContain` would also pass on a
+		// header we never managed to read at all.
+		expect(beta).toContain("interleaved-thinking-2025-05-14");
 		expect(beta).not.toContain("oauth-2025-04-20");
 	});
 
