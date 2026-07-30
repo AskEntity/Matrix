@@ -166,10 +166,19 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
+		// ⚠️ Every field here except `folder` must be forwarded to `createTaskOp`
+		// below, and `src/rest-create-fields.test.ts` pins that against
+		// `CreateTaskOpts` at COMPILE time. `draft` and `color` were absent for
+		// months: a client asking for a draft got 201 and a `pending` task —
+		// i.e. something dispatchable — because a field the body type never
+		// declared cannot be dropped loudly. MCP's `create_task` has always
+		// taken both.
 		const body = await c.req.json<{
 			title: string;
 			description: string;
 			parentId?: string;
+			draft?: boolean;
+			color?: string;
 			budgetUsd?: number;
 			folder?: boolean;
 			metadata?: Record<string, unknown>;
@@ -183,12 +192,23 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 
 		const tracker = await getTracker(ctx, project.id);
 
-		// Folder creation — minimal node, zero lifecycle
+		// Folder creation — minimal node, zero lifecycle. `metadata` is the one
+		// field of the body a GeneralNode has: `addGeneralNode` takes it and this
+		// branch passed nothing, so a plugin's folder metadata was dropped here
+		// while the task branch honoured it — one route, two branches, opposite
+		// answers about the same declared field.
+		//
+		// The task-only fields (`description`, `draft`, `color`, `budgetUsd`) are
+		// deliberately NOT refused: a folder cannot be launched at all, so
+		// `{folder: true, draft: true}` already yields something unstartable, and
+		// the rest are cosmetic on a node that has nowhere to put them. That is a
+		// judgement about consequence, not an oversight.
 		if (body.folder) {
 			const folder = tracker.addGeneralNode(
 				body.title,
 				body.parentId,
 				"folder",
+				body.metadata,
 			);
 			await tracker.save();
 			broadcastTreeUpdate(ctx, project.id, tracker);
@@ -202,6 +222,8 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 					title: body.title,
 					description: body.description ?? "",
 					parentId: body.parentId,
+					draft: body.draft,
+					color: body.color,
 					budgetUsd: body.budgetUsd,
 					metadata: body.metadata,
 				},
