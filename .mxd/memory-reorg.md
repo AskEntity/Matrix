@@ -383,6 +383,101 @@ next lookup.
 
 ---
 
+## The 2026-07-30 run: restoring the CLASS NAME is a different axis from restoring the WHY
+
+The 2026-07-28 run restored **why we wanted this**, from task descriptions. This run was told to
+restore something else and it took a user correction to see that they are not the same job:
+
+> 不是因为你没有抄名字,是因为你没有【理解】。机制和理解是不一样的。我想问你你有没有提到一个叫做
+> race condition 的词?
+
+**A section can open with a perfect user quote about why the feature was wanted and still never say
+what KIND of thing it is describing.** The exemplar: `close_task` landing inside the launch window
+had a complete, correct timeline — hook order, seconds, which guard is missing — and the words *race
+condition* appeared nowhere in the file. Say them and the paragraph is readable at a glance; leave
+them out and every reader has to rebuild the concept from the sequence.
+
+⭐ **This gap has a cheap mechanical detector, and it is worth running FIRST because it costs one
+command and aims the whole pass.** Grep the file for the standard NAMES of phenomena and look for
+the ones at zero while the phenomenon is plainly described. Measured at the start of this run:
+`race condition` **0**, `TOCTOU` **0**, `time-of-check` **0**, `idempot*` **0**, `back-pressure`
+**0**, `off-by-one` **0** — against six paragraphs describing races and four describing an
+idempotence fix. Meanwhile `silent` appeared **122** times.
+
+> **That ratio IS the finding: the file reaches for the SYMPTOM it experienced (silent, quiet,
+> nothing goes red) far more readily than for the MECHANISM the reader needs to look up.** A symptom
+> is what the author lived through; a class name is what a stranger can search, recognise and
+> generalise from.
+
+⭐ **The direction of the loss is structural, which is why the tree can always repair it.** A task
+description is written BEFORE the work, while the author still holds the problem as a CATEGORY; the
+memory entry is written AFTER, while they hold the MECHANISM. So the reliable pattern is: task
+descriptions carry class names and field names are missing; memory entries carry field names and
+class names are missing. **Reading the two side by side is not a heuristic, it is the answer sitting
+in the other document.**
+
+⚠️ **Do not force a name where the record has none.** Naming is a hypothesis to be checked, and this
+repo has already paid for recognising a pattern that was not there (a set of PARTS of one design read
+as ENTRANCES to one rule, producing a patch nobody had chosen at a layer nobody had picked). When
+you cannot find the name, write "we have not named this class" and move on. Report retrieved and
+inferred separately, because they are not the same grade of evidence.
+
+### Two findings about the file's failure modes
+
+⭐ **Append distance is measured in the FILE, not in TIME.** The classic story here is that a
+correction lands far from the claim because months passed. Measured this run: two sections written
+**the same day by the same author**, seventy lines apart, carry the same four-row table and the same
+conclusion (`These env fixtures work by an accident of where the first await sits` and `A
+state-restoring fixture is only as wide as its callback's synchronous prefix`). Nothing about the
+elapsed time explains that. **What produced it is that the author was appending, and appending puts
+the new entry at the end rather than next to its sibling.** So the duplicate-detection pass cannot be
+scoped to "the old regions".
+
+⚠️ **90 of 130 sections carry no task id, so the archaeology has to be re-run from scratch every
+pass — and for a section whose vocabulary has since changed, it may not be re-findable at all.**
+The id is the only entrance to the full record. **Whenever a pass does the archaeology, leave the id
+behind**; it converts a search that may fail into a lookup that cannot.
+
+⭐ **A class name that appears in eleven sections and is defined in none is a missing SECTION, and
+that is the most reliable merge signal phase 2 has.** Two came out of this run — *two situations,
+one observation* (the same observation is consistent with two worlds: eleven instances, each
+argued in its own region, and the remedy stated in five different vocabularies) and *a stored
+explanation expires* (six instances inside one 24-hour window, six media, no cross-reference).
+**Neither was findable by reading for redundancy, because no two instances share any wording.** They
+were findable by asking what the sections were instances OF.
+
+### The enumeration is the only CONTENT check, and every other check passing is what hides that
+
+**Measured 2026-07-30, on this document's own procedure.** A merge phase landed five commits with
+empty bodies and reported six checks green: region list, code fences, orphan headings, bold pairing,
+column widths, task-id count. **All six are STRUCTURAL. The per-section disposition list is the only
+one that asks whether a fact survived** — so "all checks passed" was fully consistent with **nine
+accidental content losses**, which is this file's own *a passing gate looks identical whether it read
+8% or 100%* wearing the reorganization procedure as its medium.
+
+⭐ **The mechanical form that makes the enumeration cheap, since "list every subsection's
+disposition" reads like bookkeeping until you have a way to do it:** for each original section pull
+out every `**bold run**` over ~25 characters and every backticked identifier, and check both against
+the new file. **The bold runs are useless alone — about 85% report "not verbatim", because merging
+rewords.** The IDENTIFIERS are the signal: an identifier present before and absent after is either a
+deliberate drop or an accident, **and separating those two is exactly what the enumeration is for.**
+Ratio on this run: **9 accidents to 1 deliberate drop.** Without the list they are indistinguishable
+in the diff, and the deliberate one looks just as alarming as the accidents.
+
+⚠️ **A multi-edit repair script that aborts part-way leaves NO trace in the diff, and the natural
+follow-up makes it permanent.** A restore script here held two edits, threw on the second one's
+assertion, and — writing the file only at the end — landed NEITHER. The follow-up fixed the edit that
+had thrown and silently dropped the one that had not, so a paragraph reported as restored was still
+missing two hours later. **Re-run every edit in an aborted script, not the one that failed, and
+verify a restore by grepping for the restored token rather than by the script exiting 0.**
+
+⭐ **Line-wrap false positives are the majority of what a token probe reports, and they are not
+noise to suppress.** Of eleven candidates, three were phrases that exist in the file split across two
+lines — this file's own *anything over ~60 characters needs a multiline search*, firing on the
+verification script written to check it. Expect roughly a third, chase all of them anyway: the check
+that separates a wrap from a loss is one `grep` on a short fragment, and the one time you skip it is
+the one that was real.
+
 ## What a run produces
 
 Two things, and the second is the more valuable:
