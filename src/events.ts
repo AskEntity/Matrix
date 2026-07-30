@@ -1406,9 +1406,11 @@ function repairActiveRegion(
  *    once the opening `compact_started` is actually found.
  *
  *    The `compact_marker` itself is always kept: the walker treats it as a
- *    structural no-op, `readFromLastCompactMarker` slices the UI log at it,
- *    and `buildSessionRepair` needs it to know where the repairable region
- *    starts.
+ *    structural no-op, and `buildSessionRepair` needs it to know where the
+ *    repairable region starts. It is no longer a slice point for anything —
+ *    `readFromLastCompactMarker` used to cut the UI log there, and cutting at
+ *    the marker is precisely what dropped the window messages this walk
+ *    splices in.
  *
  * An event with NO parentEid ends the walk's chain-following: whatever comes
  * before it is taken linearly. That is the genuine chain root at index 0, and
@@ -1421,7 +1423,52 @@ function repairActiveRegion(
  * be quietly patched over by a fallback. Same rule as `buildSessionRepair`
  * refusing to repair orphan tool_results.
  */
-export function walkActiveChainIndices(events: Event[]): number[] {
+/**
+ * The only three fields the chain walk reads.
+ *
+ * ⚠️ Stated as a type because it is a BUDGET, not documentation. A caller that
+ * has to materialise whole events in order to ask "which of these count" pays
+ * for the whole log: MEASURED on root's 115MB session, holding every parsed
+ * event is **222MB of live heap / +592MB RSS**, while holding just these three
+ * fields for the same 71,506 events is **13MB**. That difference is what lets a
+ * streaming reader answer the question at all, so widening this shape back to
+ * `Event` would silently close the door again.
+ *
+ * `Event[]` is assignable to it, so every existing caller is unaffected.
+ */
+export interface ChainLink {
+	eid?: string;
+	parentEid?: string | null;
+	type: string;
+}
+
+/**
+ * Whether the walk stops at the last completed compaction.
+ *
+ * ⭐ The chain walk answers TWO questions that were previously welded together:
+ * *what is still reachable* (follow `parentEid`, so a rewound branch is gone)
+ * and *what is still in the agent's context* (stop at the compaction that
+ * summarized the rest). They are separable, and only the second one is about
+ * compaction — so it is the argument.
+ *
+ * `"stop"` is the default and is what provider reconstruction and the UI want:
+ * unchanged behaviour for every caller that does not ask.
+ *
+ * `"past"` keeps following the chain through compaction boundaries. MEASURED
+ * why this matters: on root's session the stopping walk keeps **294 of 71,524
+ * events (0.4%)**, because 38 compactions summarized the rest. A search that
+ * always stopped would be searching 0.4% of the thing it was built to search.
+ * MEASURED what `"past"` still excludes, across all 455 real sessions: it
+ * reaches **398,792 of 399,057 events (99.93%)**, and 454 of the 455 files lose
+ * nothing at all — the shortfall is one file's 265 events on branches five
+ * rollbacks walked away from, i.e. content the user explicitly discarded.
+ */
+export type CompactionBoundary = "stop" | "past";
+
+export function walkActiveChainIndices(
+	events: readonly ChainLink[],
+	boundary: CompactionBoundary = "stop",
+): number[] {
 	const kept: number[] = [];
 	/** Buffered window `message` indices; non-null ⇔ inside a compaction window. */
 	let window: number[] | null = null;
@@ -1433,15 +1480,17 @@ export function walkActiveChainIndices(events: Event[]): number[] {
 	let wanted: string | null = null;
 
 	for (let i = events.length - 1; i >= 0; i--) {
-		const e = events[i] as Event;
+		const e = events[i] as ChainLink;
 
 		if (wanted !== null && e.eid !== wanted) continue; // not on the chain
 		wanted = e.parentEid ?? null;
 
 		if (window === null) {
 			kept.push(i);
-			// Walking backward, the marker is the window's far edge.
-			if (e.type === "compact_marker") window = [];
+			// Walking backward, the marker is the window's far edge. Under
+			// "past" there is no window and no barrier — the walk is purely
+			// "what does the chain still reach".
+			if (boundary === "stop" && e.type === "compact_marker") window = [];
 			continue;
 		}
 		if (e.type === "compact_started") {
@@ -1499,7 +1548,7 @@ export type OffChainReason =
  * world.
  */
 export function classifyOffChain(
-	events: Event[],
+	events: readonly ChainLink[],
 	activeIndices: number[] = walkActiveChainIndices(events),
 ): (OffChainReason | undefined)[] {
 	const active = new Set(activeIndices);

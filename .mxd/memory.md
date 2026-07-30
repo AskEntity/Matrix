@@ -4918,3 +4918,82 @@ number written in prose is indistinguishable from a true one on the day it stops
 nothing anywhere goes red. `src/mcp-endpoint.test.ts` pins the external list with `toContain` per
 name, i.e. an ADDITION list, so it cannot notice a tool that leaves either — it is the weaker half
 of the pin and worth knowing before trusting it.
+
+## ⭐ `read()` is not a read, and "synchronous" is not "whole file"
+
+Two beliefs about `EventStore` that were each wrong in a way that shaped a design before anyone
+checked. Both cost a round.
+
+⚠️ **`read()` MIGRATES.** A file whose first event lacks an `eid` is rewritten in place — MEASURED
+on a copy of a real session, **154,958 bytes in, 158,980 out, first event stamped**. Nothing in the
+name says so, and the files it fires on are the OLDEST ones (3296 unstamped events, newest
+2026-04-16), which is exactly the population an old-history search reaches for. **A reader that only
+wants to LOOK must not rewrite what it looks at**, which is why `streamEvents` exists beside it
+rather than being a tidier spelling of it. Callers that want migration keep calling `read()`.
+
+⭐ **`readFileSync` is one way to be synchronous, not the meaning of it.** A whole design round was
+spent on a trilemma — make `read()` async and pay `await` at 9 production + 154 test sites, or keep
+it sync and let search cost +552MB — built on treating *synchronous* and *materialises the whole
+file* as one property. `openSync` + `readSync` + `StringDecoder` is the counter-example: synchronous
+AND bounded. **The premise was never stated as an assumption, so it was never checked; it arrived
+inside a measurement of `readFileSync` and inherited its authority.**
+
+MEASURED, isolated processes, root's 114.9MB session (71,571 events):
+
+| driver | peak RSS | live heap | time |
+|---|---|---|---|
+| `streamEvents` — sync chunked, consumer keeps nothing | **+136MB** | +40MB | 143ms |
+| `readFileSync` + parse all | +552MB | +221MB | 154ms |
+| `read()` | +536MB | +146MB | 164ms |
+| holding only `(eid, parentEid, type)` for all events | — | **+13MB** | — |
+
+That last row is why `ChainLink` is a named type: it is the entire input to `walkActiveChainIndices`,
+so the backward walk is affordable on a stream. **Widening it back to `Event` closes that door
+silently.**
+
+⚠️ **STATED TRADE: the sync walk BLOCKS the worker thread** — linear at **~120ms per 100MB**, worst
+case **133ms** on the largest file in the entire corpus (114.9MB; measured across 573 session files
+in all projects). Bounded memory bought with a blocked thread, chosen deliberately. The async form
+buys ~16MB of peak and is not worth an async ripple.
+
+⭐ **The instrument for a driver swap is byte-identity over WHOLE outputs, not a green suite.**
+`streamEvents` vs the old whole-file loop: **71,571 events, `JSON.stringify`-identical at every
+index**, malformed line skipped at the same position with the same warning. A suite can only say
+"the cases someone thought to assert still pass".
+
+## ⭐ The second truncation was excluding exactly what the first one preserved
+
+**DECIDED 2026-07-30 (user): *「一起删吧。直接删掉单独的 readFromLastCompactMarker。如今的 read
+active 增加选项包含/不包含 compact」***. So there is ONE walk and the compaction boundary is an
+argument: `walkActiveChainIndices(events, "stop" | "past")`, surfaced on `readActive` and
+`streamActive`. AI and UI take `"stop"` (unchanged); `search_logs` takes `"past"`.
+
+**Why the deleted function was wrong, and it is not a tidy-up.** The chain walk ends at
+`compact_started`; `readFromLastCompactMarker` sliced from the later `compact_marker`. Between them
+lie the messages delivered while the summarizer was running — the ones the walk **splices in
+deliberately**, because reconstruction loses them otherwise. MEASURED project-wide: **38 completed
+compactions, 15 with at least one message in the window, 27 messages**, overwhelmingly `user` and
+`user_message_forwarded` (*"我发现了，orchestrator根本compact不了，这怎么办"*). ⚠️ **A fixture drawn
+from root's CURRENT tail cannot show this — its barrier sits at index 0, so both behaviours return
+the same thing.** The regression fixture has to be constructed with a message inside the window.
+
+**Why the parameter is load-bearing rather than a convenience:** the stopping walk keeps **294 of
+71,524 events (0.4%)** on root's session, because 38 compactions summarized the rest. A search that
+always stopped would be searching 0.4% of the thing it exists to search.
+
+⭐ **What `"past"` still excludes, and the risk it retires:** it keeps following the chain, so a
+rewound branch stays gone. The worry was that the walk might break on the pre-eid files and silently
+lose the oldest history. MEASURED across all 455 real sessions: **398,792 of 399,057 events
+(99.93%)**, and **454 of the 455 files lose nothing at all** — the shortfall is one file's 265 events
+on branches five rollbacks walked away from. The pre-eid files traverse fine because a null
+`parentEid` sets the walk's target to null, so it takes the next event unconditionally.
+
+⚠️ **BEHAVIOUR CHANGE, intended: a forked session now shows its inherited parent history.** That
+function also treated `fork_marker` as a start point, so the UI hid context the model could always
+see. Several tests asserted that absence and were INVERTED rather than re-pointed — including one
+whose real subject turned out to be the opposite direction (root never sees the child's work), which
+still holds.
+
+⚠️ `hasOlderEvents` was computed from that barrier. It survives as
+`readActive(id).length < countEvents(id)` — the same answer with nothing to keep in sync, and
+`countEvents` streams so it costs no memory.

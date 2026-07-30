@@ -101,7 +101,7 @@ async function teardownTestContext(ctx: TestContext): Promise<void> {
 // ── Invariant 1: Session Isolation ──
 
 describe("Invariant: Session Isolation", () => {
-	test("readFromLastCompactMarker on forked session excludes pre-fork parent events", async () => {
+	test("a forked session KEEPS its inherited parent history (inverted)", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "mxd-inv-store-"));
 		const store = new EventStore(dir);
 
@@ -188,30 +188,24 @@ describe("Invariant: Session Isolation", () => {
 			];
 			await store.appendBatch("child-task", childEvents);
 
-			// readFromLastCompactMarker should use fork_marker as barrier
-			const result = store.readFromLastCompactMarker("child-task");
+			// ⚠️ INVERTED. `fork_marker` was a barrier here, so this asserted
+			// that the inherited parent history was ABSENT. That truncation is
+			// deleted: a forked session's context legitimately includes the
+			// history it inherited, and the UI hiding what the model can see was
+			// the disagreement being removed. What still holds — and is what
+			// session isolation actually means — is that this session's events
+			// are the ones in ITS file, and another session's are not.
+			const events = store.readActive("child-task");
 
-			expect(result.hasOlderEvents).toBe(true);
-
-			// The barrier is the fork_marker — no parent-taskId events should appear
-			// (except the fork_marker itself which has taskId=child-task)
-			for (const event of result.events) {
-				expect(event.taskId).toBe("child-task");
-			}
-
-			// Fork marker should be the first event
-			expect(result.events[0]?.type).toBe("fork_marker");
-
-			// Parent events must NOT appear
-			const parentTaskEvents = result.events.filter(
-				(e) => e.taskId === "parent-task",
-			);
-			expect(parentTaskEvents).toHaveLength(0);
+			// The inherited history is now present, carrying the parent's taskId
+			// because that is who emitted it (see "pre-fork events retain parent
+			// taskId" below — that invariant is unchanged).
+			const parentTaskEvents = events.filter((e) => e.taskId === "parent-task");
+			expect(parentTaskEvents.length).toBeGreaterThan(0);
+			expect(events.some((e) => e.type === "fork_marker")).toBe(true);
 
 			// Child's own events must appear
-			const childTexts = result.events.filter(
-				(e) => e.type === "assistant_text",
-			);
+			const childTexts = events.filter((e) => e.type === "assistant_text");
 			expect(childTexts.length).toBeGreaterThanOrEqual(1);
 			expect(
 				childTexts.some(
@@ -302,7 +296,7 @@ describe("Invariant: Session Isolation", () => {
 // ── Invariant 2: Compact Barrier Correctness ──
 
 describe("Invariant: Compact Barrier Correctness", () => {
-	test("fork_marker after compact_marker: fork is the barrier", async () => {
+	test("fork_marker after compact_marker: fork is NOT a barrier (inverted)", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "mxd-inv-barrier-"));
 		const store = new EventStore(dir);
 
@@ -341,24 +335,29 @@ describe("Invariant: Compact Barrier Correctness", () => {
 			];
 			await store.appendBatch("task-1", events);
 
-			const result = store.readFromLastCompactMarker("task-1");
+			// ⚠️ INVERTED. This asserted "fork at index 3 beats compact at index 1",
+			// i.e. that a later fork_marker won the barrier race. There is no
+			// barrier race left: `fork_marker` is not a boundary at all, so the
+			// compaction is the only thing that stops the walk and everything
+			// after it — including "between barriers" — is kept.
+			const events2 = store.readActive("task-1");
 
-			// Fork at index 3 > compact at index 1 → fork is the barrier
-			expect(result.hasOlderEvents).toBe(true);
-			expect(result.events[0]?.type).toBe("fork_marker");
-			expect(result.events).toHaveLength(2);
-			expect(result.events[1]).toMatchObject({
-				type: "assistant_text",
-				content: "after fork",
-				taskId: "task-1",
-				ts: 5000,
-			});
-
-			// "between barriers" must NOT be in the result
+			expect(events2.some((e) => e.type === "fork_marker")).toBe(true);
 			expect(
-				result.events.some(
+				events2.some(
 					(e) =>
 						e.type === "assistant_text" && e.content === "between barriers",
+				),
+			).toBe(true);
+			expect(
+				events2.some(
+					(e) => e.type === "assistant_text" && e.content === "after fork",
+				),
+			).toBe(true);
+			// The compaction still cuts: "very old" predates the marker.
+			expect(
+				events2.some(
+					(e) => e.type === "assistant_text" && e.content === "very old",
 				),
 			).toBe(false);
 		} finally {
@@ -366,7 +365,7 @@ describe("Invariant: Compact Barrier Correctness", () => {
 		}
 	});
 
-	test("compact_marker after fork_marker: compact is the barrier", async () => {
+	test("an unpaired compact_marker still stops the walk, fork or no fork", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "mxd-inv-barrier-"));
 		const store = new EventStore(dir);
 
@@ -405,22 +404,23 @@ describe("Invariant: Compact Barrier Correctness", () => {
 			];
 			await store.appendBatch("task-1", events);
 
-			const result = store.readFromLastCompactMarker("task-1");
+			const events2 = store.readActive("task-1");
 
-			// Compact at index 3 > fork at index 1 → compact is the barrier
-			expect(result.hasOlderEvents).toBe(true);
-			expect(result.events[0]?.type).toBe("compact_marker");
-			expect(result.events).toHaveLength(2);
-			expect(result.events[1]).toMatchObject({
+			// Unchanged: an unpaired compact_marker still stops the walk. Only the
+			// COMPARISON with fork_marker is gone — there is no race to win now.
+			expect(events2.length < store.countEvents("task-1")).toBe(true);
+			expect(events2[0]?.type).toBe("compact_marker");
+			expect(events2).toHaveLength(2);
+			expect(events2[1]).toMatchObject({
 				type: "assistant_text",
 				content: "after compact",
 				taskId: "task-1",
 				ts: 5000,
 			});
 
-			// "between barriers" must NOT be in the result
+			// "between barriers" predates the marker, so it is still cut.
 			expect(
-				result.events.some(
+				events2.some(
 					(e) =>
 						e.type === "assistant_text" && e.content === "between barriers",
 				),
@@ -430,7 +430,7 @@ describe("Invariant: Compact Barrier Correctness", () => {
 		}
 	});
 
-	test("multiple compactions + fork: last barrier wins", async () => {
+	test("multiple unpaired compactions: the last one wins", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "mxd-inv-barrier-"));
 		const store = new EventStore(dir);
 
@@ -469,14 +469,13 @@ describe("Invariant: Compact Barrier Correctness", () => {
 			];
 			await store.appendBatch("task-1", events);
 
-			const result = store.readFromLastCompactMarker("task-1");
+			const events2 = store.readActive("task-1");
 
-			// Last compact at index 3 > fork at index 2 > first compact at index 1
-			expect(result.hasOlderEvents).toBe(true);
-			expect(result.events[0]?.type).toBe("compact_marker");
-			if (result.events[0]?.type === "compact_marker") {
-			}
-			expect(result.events).toHaveLength(2);
+			// The LAST unpaired compact_marker wins; the fork between them is not
+			// a boundary and never was one for the chain walk.
+			expect(events2.length < store.countEvents("task-1")).toBe(true);
+			expect(events2[0]?.type).toBe("compact_marker");
+			expect(events2).toHaveLength(2);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
@@ -503,9 +502,9 @@ describe("Invariant: Compact Barrier Correctness", () => {
 			];
 			await store.appendBatch("task-1", events);
 
-			const result = store.readFromLastCompactMarker("task-1");
-			expect(result.hasOlderEvents).toBe(false);
-			expect(stripChainFields(result.events)).toEqual(events);
+			const events2 = store.readActive("task-1");
+			expect(events2.length < store.countEvents("task-1")).toBe(false);
+			expect(stripChainFields(events2)).toEqual(events);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
@@ -784,7 +783,6 @@ describe("Invariant: Task Events Endpoint Isolation", () => {
 			),
 		).toBe(false);
 
-		// Fetch child events with after=compact — fork_marker is the barrier
 		const childEventsRes = await app.app.request(
 			`/projects/${projectId}/tasks/${childId}/events?after=compact`,
 			{ method: "GET" },
@@ -794,10 +792,17 @@ describe("Invariant: Task Events Endpoint Isolation", () => {
 			hasOlderEvents: boolean;
 		};
 
-		// Child events after barrier should only have child's taskId
-		for (const event of childEventsData.events) {
-			expect(event.taskId).toBe(childId);
-		}
+		// ⚠️ INVERTED, and this is the user-visible half of the fork change.
+		// This used to assert that EVERY event carried the child's taskId,
+		// because `fork_marker` truncated the response. It no longer does, so a
+		// forked session's log now shows the history it inherited — which the
+		// model could always see and the UI was hiding.
+		//
+		// The isolation this describe block is named for is unaffected and is
+		// what the rest of the test still checks: the isolation is that a
+		// session's log is ITS FILE, not that every event in it was emitted by
+		// this task.
+		expect(childEventsData.events.some((e) => e.taskId !== childId)).toBe(true);
 
 		// "child-only content" MUST appear in child's event stream
 		expect(
@@ -807,15 +812,19 @@ describe("Invariant: Task Events Endpoint Isolation", () => {
 			),
 		).toBe(true);
 
-		// "root response" must NOT appear in child's post-barrier events
+		// And the inherited turn itself is visible — "root response" was emitted
+		// BEFORE the fork, so it is part of what this child was forked WITH.
+		// Asserting its absence here (as this test used to, via the fork
+		// barrier) was asserting that the UI hides context the model holds.
 		expect(
 			childEventsData.events.some(
 				(e) => e.type === "assistant_text" && e.content === "root response",
 			),
-		).toBe(false);
+		).toBe(true);
 
-		// hasOlderEvents should be true (fork_marker is a barrier with pre-fork events before it)
-		expect(childEventsData.hasOlderEvents).toBe(true);
+		// The isolation that still holds runs the OTHER way and is asserted
+		// above: root's stream never contains "child-only content". A fork
+		// inherits history; it does not publish back into the source.
 	});
 
 	test("GET /tasks/:id/events (no after param) returns all events for that session only", async () => {
@@ -937,8 +946,8 @@ describe("Invariant: copySessionFrom Correctness", () => {
 			});
 
 			// Each child's post-barrier events are isolated
-			const child1Result = store.readFromLastCompactMarker("child-1");
-			const child2Result = store.readFromLastCompactMarker("child-2");
+			const child1Result = { events: store.readActive("child-1") };
+			const child2Result = { events: store.readActive("child-2") };
 
 			// child-1 must not see child-2's work and vice versa
 			expect(

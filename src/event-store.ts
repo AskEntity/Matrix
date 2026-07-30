@@ -1,18 +1,30 @@
 import { randomBytes } from "node:crypto";
 import {
 	appendFileSync,
+	closeSync,
 	existsSync,
 	mkdirSync,
+	openSync,
 	readdirSync,
-	readFileSync,
+	readSync,
 	renameSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Event } from "./events.ts";
+import { StringDecoder } from "node:string_decoder";
+import type { ChainLink, CompactionBoundary, Event } from "./events.ts";
 import { walkActiveChainIndices } from "./events.ts";
+
+/**
+ * Read chunk for the streaming walk. 256KB is comfortably above the largest
+ * single event measured in production (a 1.68MB `message:user` spans several
+ * chunks, which the line loop handles) and small enough that the buffer is
+ * never the memory story.
+ */
+const STREAM_CHUNK_BYTES = 256 * 1024;
+
 import { TOOL_FORK_TASK_CONTEXT } from "./tool-names.ts";
 import { ulid } from "./ulid.ts";
 
@@ -255,7 +267,130 @@ export class EventStore {
 	}
 
 	/**
+	 * THE file walk: one session's JSONL, one event at a time, in file order.
+	 * Malformed and blank lines are skipped, with the same warning `read` has
+	 * always emitted and the same line numbering.
+	 *
+	 * ⚠️ Two properties this has that {@link read} does not, and both are the
+	 * reason it exists rather than being a tidier spelling of the same thing:
+	 *
+	 * 1. **It never materialises the log.** MEASURED on root's 115MB session
+	 *    (71,506 events): `read()` costs **+592MB RSS / 222MB live heap**,
+	 *    because the file text, the split array and every parsed event are all
+	 *    resident at once. Streaming holds one line at a time — 18MB live. The
+	 *    worker doing this is the one running live agents, so that difference
+	 *    is the difference between a feature and an outage.
+	 *
+	 * 2. **It does NOT migrate.** `read()` rewrites the whole file when the
+	 *    first event lacks an `eid` — MEASURED on a copy of a real session:
+	 *    154,958 bytes in, 158,980 bytes out, first event stamped. Nothing in
+	 *    that method's name says so. A reader that only wants to LOOK must not
+	 *    rewrite what it looks at, and the files this matters for are the
+	 *    oldest ones (3296 unstamped events, newest 2026-04-16) — exactly the
+	 *    population a search of old history is reaching for. Callers that want
+	 *    migration keep calling `read()`.
+	 *
+	 * Synchronous on purpose: `read` is sync and is called from sync paths all
+	 * over the runtime, so making the shared walk async would ripple outward
+	 * for no gain. Chunked `readSync` + `StringDecoder` gives bounded memory
+	 * without that — the decoder is what keeps a multi-byte character split
+	 * across a chunk boundary from being corrupted.
+	 */
+	streamEvents(sessionId: string, onEvent: (event: Event) => void): number {
+		const p = this.path(sessionId);
+		if (!existsSync(p)) return 0;
+		let malformed = 0;
+		const fd = openSync(p, "r");
+		try {
+			const buf = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+			const decoder = new StringDecoder("utf8");
+			let pending = "";
+			// Counts EVERY line including blanks, so the malformed-line warning
+			// names the same line number the whole-file read used to.
+			let lineNo = 0;
+			const take = (line: string): void => {
+				const n = lineNo++;
+				if (!line) return;
+				try {
+					onEvent(JSON.parse(line) as Event);
+				} catch {
+					malformed++;
+					console.warn(
+						`[EventStore] Skipping malformed JSONL line ${n} in session ${sessionId}`,
+					);
+				}
+			};
+			// Scan with an INDEX rather than re-slicing `pending` per line. The
+			// re-slicing form is the one you write first and it is quadratic in
+			// lines-per-chunk on paper — ~2500 lines in a 256KB chunk, each
+			// copying the remainder. It does not show up in timings here because
+			// JSC shares substring storage, which is a property of the engine
+			// rather than of the code; this version does not depend on it.
+			let bytes = readSync(fd, buf, 0, STREAM_CHUNK_BYTES, null);
+			while (bytes > 0) {
+				pending += decoder.write(buf.subarray(0, bytes));
+				let from = 0;
+				let nl = pending.indexOf("\n", from);
+				while (nl !== -1) {
+					take(pending.slice(from, nl));
+					from = nl + 1;
+					nl = pending.indexOf("\n", from);
+				}
+				pending = from > 0 ? pending.slice(from) : pending;
+				bytes = readSync(fd, buf, 0, STREAM_CHUNK_BYTES, null);
+			}
+			pending += decoder.end();
+			take(pending);
+		} finally {
+			closeSync(fd);
+		}
+		return malformed;
+	}
+
+	/**
+	 * Stream the events the chain still reaches, without materialising the log.
+	 *
+	 * Same boundary question as {@link readActive} and the same one walk — this
+	 * is its streaming form, for the caller that cannot afford the array.
+	 *
+	 * Two passes, deliberately. Pass 1 keeps only `(eid, parentEid, type)` per
+	 * event — MEASURED at **13MB of live heap** for root's 71,506 events,
+	 * against 222MB for the parsed events — which is what makes the backward
+	 * walk affordable at all. Pass 2 re-streams and emits the kept indices, so
+	 * every consumer downstream sees an ordinary event stream and none of this
+	 * logic leaks into it. One pass is possible by index-tagging everything the
+	 * consumer accumulates and filtering afterwards; that pushes the boundary
+	 * question into the consumer, which is what having one walk is for.
+	 *
+	 * ⚠️ The log may grow between the passes (append-only, so never shrink).
+	 * Events appended after pass 1 fall outside the computed index set and are
+	 * skipped — the answer is a consistent snapshot of the file as pass 1 saw
+	 * it, rather than a torn mix of two.
+	 */
+	streamActive(
+		sessionId: string,
+		onEvent: (event: Event) => void,
+		boundary: CompactionBoundary = "stop",
+	): number {
+		const links: ChainLink[] = [];
+		const malformed = this.streamEvents(sessionId, (e) => {
+			links.push({ eid: e.eid, parentEid: e.parentEid, type: e.type });
+		});
+		if (links.length === 0) return malformed;
+		const keep = new Set(walkActiveChainIndices(links, boundary));
+		let i = 0;
+		this.streamEvents(sessionId, (e) => {
+			if (keep.has(i++)) onEvent(e);
+		});
+		return malformed;
+	}
+
+	/**
 	 * Read all events for a session. Malformed and blank lines are skipped.
+	 *
+	 * ⚠️ This MIGRATES: a file whose first event lacks an `eid` is rewritten in
+	 * place. That is deliberate and long-standing, but it means `read` is not a
+	 * read — see {@link streamEvents} for the one that only looks.
 	 *
 	 * Physical line numbers are deliberately NOT surfaced: nothing operates on
 	 * file positions any more. Repair and rollback both address events by eid,
@@ -263,28 +398,17 @@ export class EventStore {
 	 * data loss (FIX-8 R8-B#4) has no place left to happen.
 	 */
 	read(sessionId: string): Event[] {
-		const p = this.path(sessionId);
-		if (!existsSync(p)) return [];
-		const text = readFileSync(p, "utf-8");
 		const events: Event[] = [];
-		const rawLines = text.split("\n");
-		for (let i = 0; i < rawLines.length; i++) {
-			const line = rawLines[i];
-			if (!line) continue;
-			try {
-				events.push(JSON.parse(line) as Event);
-			} catch {
-				console.warn(
-					`[EventStore] Skipping malformed JSONL line ${i} in session ${sessionId}`,
-				);
-			}
-		}
+		this.streamEvents(sessionId, (e) => {
+			events.push(e);
+		});
+		if (events.length === 0) return events;
 
 		// Auto-migrate: if events exist but first one lacks eid, assign eids
 		// to the whole file and rewrite atomically (temp + rename).
 		const firstEvent = events[0];
 		if (firstEvent && !firstEvent.eid) {
-			this.migrateEventIds(sessionId, p, events);
+			this.migrateEventIds(sessionId, this.path(sessionId), events);
 		}
 
 		// Sync lastEventIds so subsequent appends chain correctly.
@@ -327,68 +451,59 @@ export class EventStore {
 	}
 
 	/**
-	 * Read active events for provider message reconstruction.
+	 * Read the events the chain still reaches.
 	 *
-	 * Walks the parentEid chain from the last event backward, collecting only
-	 * events reachable via the chain, then cuts at the last completed
-	 * compaction (see `walkActiveChainIndices`).
+	 * Walks the parentEid chain from the last event backward, so a rolled-back
+	 * branch is never visited. `boundary` decides the SECOND question — whether
+	 * the walk also stops at the last completed compaction:
 	 *
-	 * Without rollback: every event chains linearly → the whole log up to the
-	 * compaction boundary.
+	 * - `"stop"` (default) is what provider reconstruction and the UI want:
+	 *   the conversation as it currently stands.
+	 * - `"past"` keeps going, for a caller that wants the history a summary
+	 *   was written to replace.
 	 *
-	 * With rollback (setChainHead): the new event's parentEid jumps back to
-	 * the target event, so rolled-back events are never visited.
+	 * ⚠️ There used to be a `readFromLastCompactMarker` beside this, applying a
+	 * SECOND truncation from the `compact_marker` onward, and deleting it is
+	 * the point of the parameter rather than a tidy-up. The chain walk ends at
+	 * `compact_started`; the marker is later; between them lie the messages
+	 * delivered while the summarizer was running — which `walkActiveChainIndices`
+	 * splices in DELIBERATELY, because reconstruction loses them otherwise.
+	 * MEASURED across this project's sessions: **38 completed compactions, 15
+	 * with at least one message in the window, 27 messages**, overwhelmingly
+	 * `user` and `user_message_forwarded` (e.g. *"我发现了，orchestrator根本
+	 * compact不了，这怎么办"*). **The second truncation was excluding exactly
+	 * what the first one exists to preserve.**
+	 *
+	 * That function also treated `fork_marker` as a start point, so a forked
+	 * session's UI hid the inherited parent history while the model could see
+	 * it. That disagreement goes with it.
 	 */
-	readActive(sessionId: string): Event[] {
+	readActive(
+		sessionId: string,
+		boundary: CompactionBoundary = "stop",
+	): Event[] {
 		const all = this.read(sessionId);
-		return walkActiveChainIndices(all).map((i) => all[i] as Event);
+		return walkActiveChainIndices(all, boundary).map((i) => all[i] as Event);
 	}
 
 	/**
-	 * Read events from the last compact_marker onward (for UI activity log).
-	 * Returns the compact_marker itself plus all events after it.
-	 * Also indicates whether there are older events before the marker.
+	 * How many events the file holds — the population {@link readActive} is a
+	 * subset of.
 	 *
-	 * Uses chain-walk so rolled-back events are excluded. The barrier
-	 * (compact_marker or fork_marker, whichever comes last in the active chain)
-	 * is included in the result.
+	 * Exists so a caller can answer "is there history this view excludes?"
+	 * without a second copy of the chain walk. That question used to be
+	 * answered by `readFromLastCompactMarker`'s `hasOlderEvents`, computed off
+	 * a barrier that no longer exists; comparing the two counts is the same
+	 * answer with nothing to keep in sync.
 	 *
-	 * For forked sessions, pre-fork events (copies of the parent's history) are
-	 * excluded: fork_marker acts as a barrier here (it is NOT a chain-walk
-	 * barrier — a forked session's context legitimately includes the inherited
-	 * history).
+	 * Streams, so it costs no memory beyond one line.
 	 */
-	readFromLastCompactMarker(sessionId: string): {
-		events: Event[];
-		hasOlderEvents: boolean;
-	} {
-		const all = this.read(sessionId);
-		const activeIndices = walkActiveChainIndices(all);
-		const activeEvents = activeIndices.map((i) => all[i] as Event);
-
-		// Find the barrier in the active chain
-		const lastCompact = activeEvents.findLastIndex(
-			(e) => e.type === "compact_marker",
-		);
-		const lastFork = activeEvents.findLastIndex(
-			(e) => e.type === "fork_marker",
-		);
-		const barrier = Math.max(lastCompact, lastFork);
-		if (barrier === -1) {
-			// No barrier — return all active events
-			// hasOlderEvents = true when some events were excluded by chain-walk
-			return {
-				events: activeEvents,
-				hasOlderEvents: activeEvents.length < all.length,
-			};
-		}
-		// hasOlderEvents = true only if the barrier is NOT the first event
-		// in the active chain (i.e., there are chain-walked events before it)
-		// OR if the chain-walk excluded some events from the full log
-		return {
-			events: activeEvents.slice(barrier),
-			hasOlderEvents: barrier > 0 || activeIndices[0] !== 0,
-		};
+	countEvents(sessionId: string): number {
+		let n = 0;
+		this.streamEvents(sessionId, () => {
+			n++;
+		});
+		return n;
 	}
 
 	/**

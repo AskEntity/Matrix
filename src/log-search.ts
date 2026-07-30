@@ -28,8 +28,8 @@
  * task is, does not touch the tracker, and does not import the runtime.
  */
 
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import type { EventStore } from "./event-store.ts";
+import type { CompactionBoundary } from "./events.ts";
 import { relativeAge } from "./search-hit-format.ts";
 
 // ── The vocabulary: what an event's "kind" is ──
@@ -255,7 +255,6 @@ export interface LogSearchResult {
 	searchedEvents: number;
 	/** Every event in the file, so the header can show what the filter removed. */
 	totalEvents: number;
-	fileBytes: number;
 	/** Lines that would not parse. Reported, never silently skipped. */
 	malformedLines: number;
 	elapsedMs: number;
@@ -277,6 +276,12 @@ export interface LogSearchOptions {
 	context?: number;
 	/** Maximum hits collected. The byte budget usually binds first. */
 	limit?: number;
+	/**
+	 * Whether the chain walk stops at the last completed compaction. Defaults
+	 * to `"past"` HERE and `"stop"` everywhere else, because searching the
+	 * current context only would search 0.4% of root's log.
+	 */
+	boundary?: CompactionBoundary;
 }
 
 // ── Extraction ──
@@ -375,14 +380,25 @@ function optionalEid(event: Record<string, unknown>): string | undefined {
 // ── The scan ──
 
 /**
- * Stream `filePath`, one JSON line at a time, matching `query`.
+ * Match `query` against one session's conversation.
  *
- * ⚠️ STREAMS AND NEVER ACCUMULATES. The file is read line by line and every
- * event is reduced immediately to a truncated record; nothing holds the parsed
- * events. Reading root's 113MB session into an array of objects would cost
- * hundreds of MB of heap inside the worker that runs the agent loop, next to
- * live agents. MEASURED on that file: full streaming parse of all 70,991 events
- * is 154ms, so the cost that needed bounding was memory, not time.
+ * ⚠️ Reads through `EventStore.streamActive`, NOT through its own file walk.
+ * This module used to carry a private line reader, and the objection to it was
+ * not the loop — it was that it constituted a second answer to *what an event
+ * line means, which fields hold text, and which events count*. Those all belong
+ * to the store and to `walkActiveChainIndices`, so the boundary is an argument
+ * here rather than a reimplementation.
+ *
+ * `boundary: "past"` is the whole reason that argument exists. MEASURED: the
+ * stopping walk keeps 294 of root's 71,524 events (0.4%), because 38
+ * compactions summarized the rest — a search that stopped would be searching
+ * 0.4% of the thing it exists to search. Walking past still follows the chain,
+ * so a rewound branch stays excluded: across all 455 real sessions that reaches
+ * **398,792 of 399,057 events (99.93%)**, and 454 of them lose nothing at all.
+ *
+ * ⚠️ STREAMS AND NEVER ACCUMULATES. Every event is reduced immediately to a
+ * truncated record; nothing holds the parsed log. `read()` on the same file
+ * costs +536MB RSS / 146MB live heap, inside the worker that runs live agents.
  *
  * NEGATIVE RESULT, so nobody re-derives it: a raw substring pre-filter (test
  * the undecoded line before parsing it) measured 51ms against 154ms — a real
@@ -391,7 +407,8 @@ function optionalEid(event: Record<string, unknown>): string | undefined {
  * would silently fail to match lines that do contain it. Not worth it.
  */
 export async function searchTaskLog(
-	filePath: string,
+	store: EventStore,
+	sessionId: string,
 	opts: LogSearchOptions,
 ): Promise<LogSearchResult> {
 	const started = performance.now();
@@ -413,7 +430,6 @@ export async function searchTaskLog(
 		totalMatches: 0,
 		searchedEvents: 0,
 		totalEvents: 0,
-		fileBytes: 0,
 		malformedLines: 0,
 		elapsedMs: 0,
 		skippedKinds,
@@ -421,10 +437,8 @@ export async function searchTaskLog(
 		hitsTruncated: false,
 	};
 
-	let size = 0;
-	try {
-		size = (await stat(filePath)).size;
-	} catch {
+	// "no session file" and "no matches" must never be the same answer.
+	if (!store.has(sessionId)) {
 		return { ...empty, elapsedMs: performance.now() - started };
 	}
 
@@ -534,36 +548,13 @@ export async function searchTaskLog(
 		if (ring.length > contextSize) ring.shift();
 	};
 
-	await new Promise<void>((resolve, reject) => {
-		const stream = createReadStream(filePath, { encoding: "utf-8" });
-		let buf = "";
-		const consume = (line: string) => {
-			if (!line.trim()) return;
-			let parsed: Record<string, unknown>;
-			try {
-				parsed = JSON.parse(line) as Record<string, unknown>;
-			} catch {
-				malformedLines++;
-				return;
-			}
-			handleEvent(parsed);
-		};
-		stream.on("data", (chunk) => {
-			buf += chunk;
-			let nl = buf.indexOf("\n");
-			while (nl !== -1) {
-				const line = buf.slice(0, nl);
-				buf = buf.slice(nl + 1);
-				nl = buf.indexOf("\n");
-				consume(line);
-			}
-		});
-		stream.on("error", reject);
-		stream.on("end", () => {
-			consume(buf);
-			resolve();
-		});
-	});
+	// THE read. Everything above is reduction; the walk and the boundary both
+	// belong to the store.
+	malformedLines = store.streamActive(
+		sessionId,
+		(e) => handleEvent(e as unknown as Record<string, unknown>),
+		opts.boundary ?? "past",
+	);
 
 	return {
 		fileExists: true,
@@ -572,7 +563,6 @@ export async function searchTaskLog(
 		totalMatches,
 		searchedEvents,
 		totalEvents,
-		fileBytes: size,
 		malformedLines,
 		elapsedMs: performance.now() - started,
 		skippedKinds,
@@ -675,13 +665,12 @@ export function formatLogSearchResult(
 		);
 	}
 
-	const mb = (result.fileBytes / 1e6).toFixed(1);
 	const head: string[] = [];
 	head.push(
 		`search_logs /${query}/ in task ${taskId} — ${plural(result.matchingEvents, "matching event", "matching events")}, ${plural(result.totalMatches, "match", "matches")} in total`,
 	);
 	head.push(
-		`searched ${result.searchedEvents.toLocaleString()} of ${result.totalEvents.toLocaleString()} events (${mb}MB file) in ${Math.round(result.elapsedMs)}ms`,
+		`searched ${result.searchedEvents.toLocaleString()} of ${result.totalEvents.toLocaleString()} reachable events in ${Math.round(result.elapsedMs)}ms`,
 	);
 	if (result.skippedKinds.length > 0) {
 		head.push(

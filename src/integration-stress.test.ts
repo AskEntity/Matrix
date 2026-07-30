@@ -340,11 +340,9 @@ describe("Stress: compaction + restart", () => {
 		const allRead = store.read("compact-test");
 		expect(allRead.length).toBe(allEvents.length);
 
-		// readFromLastCompactMarker includes the marker itself
-		const fromMarker = store.readFromLastCompactMarker("compact-test");
-		expect(fromMarker.hasOlderEvents).toBe(true);
-		expect(fromMarker.events.length).toBe(postCompactEvents.length + 1); // +1 for marker
-		expect(fromMarker.events[0]?.type).toBe("compact_marker");
+		// …and there IS older history behind it — the flag the deleted
+		// `readFromLastCompactMarker` used to return, now just the two counts.
+		expect(active.length < store.countEvents("compact-test")).toBe(true);
 
 		Bun.spawnSync(["rm", "-rf", tmpDir]);
 	});
