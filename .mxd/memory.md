@@ -4366,3 +4366,55 @@ say a past measurement usually holds while a past *"so we decided not to"* may n
 delete the false sentence and add nothing** — the true version is already in the payload headers,
 and restating it in the prompt would be the same paragraph in two places, free to drift. **Silence
 where another surface already speaks is correct; an assertion in the opposite direction is not.**
+
+## A request inside a `done()` result is owed to nobody
+
+**A result round is append-only history. It can RECORD a request; nothing executes it, and nothing
+turns red when it is ignored** — so *actioned* and *forgotten* leave the identical trace. That is
+*Two situations, one observation* in the one medium every task in this system ends with.
+
+**The need is real, and it has already invented a vocabulary with no receiver on the other end.**
+Measured by `scripts/scan-unowned-requests.ts` over every result round in every registered lens (134
+rounds, 727 tasks, 572K chars): **28 rounds carry request-shaped prose, 15 of them naming no task id
+anywhere**, and the ADDRESSED form appears in six spellings across six tasks that
+could not have copied each other — `FINDING ROOT SHOULD ACT ON`, `TWO THINGS FOR ROOT`, `FOR ROOT`
+plus *three things I could not do myself*, `FOUR THINGS FOR ROOT TO DECIDE OR KNOW`, `Open for
+root`, and *left for root to decide whether it becomes a task*. *When agents repeatedly do X, ask
+whether the motivation is legitimate*: it is, so this wants a destination rather than a prohibition.
+
+**The failure is not that nobody reads it. It is that the reader has a LIFETIME.** Measured on the
+2026-07-30 cold read: of the 8 findings its report placed out of scope, **5 were fixed within 90
+minutes**, and the 3 still in prose when attention moved have been nobody's since. The window is
+narrower than *the reader was awake* — reading the commits' `Task-Id` trailers, all five fixes were
+committed by the CHILD that had just merged the report, not by root, so what executed them was a
+second agent that happened to still be alive. One round of `01KYQKY5S2826C4SNMWM0MVN6T` did both
+things at once: one finding it FILED as a node, one it left as *"for root to decide whether it
+becomes a task"*. Both got done, because somebody was still attending.
+`01KYJ4E7JERXZFJCQDB5SB9GQ6`'s did not, and a human cleaned it up by hand two days later.
+
+> **`close_task` is the deadline.** A request still in prose when its task closes is not pending —
+> it is gone, and the round it lives in will not be read again.
+
+**The remedy is the one medium here that holds OWED rather than RECORDED: a node.** `create_task` is
+unrestricted anywhere in the tree, so the reporter can always file, and the result then names the
+id. That is also what finally separates the two worlds inside a single sentence: **an owned request
+carries an id and an unowned one does not.** 13 of those 28 rounds already do it, so the rule
+codifies a practice rather than inventing one. **SCOPE on both counts: the scan matches sentence
+SHAPE, and "names an id" is a proxy** — the id may belong to something else in the same round. Read
+the hits before quoting the number as an adjudicated backlog.
+
+**Answer the obvious objection in the text, or the rule reads as bookkeeping.** *"There are ~130
+drafts nobody has actioned, so filing a node changes nothing."* The node does not promise action; it
+changes the failure mode. An unactioned node is `pending`, statused, searchable and visible in the
+tree — a backlog you can see and decide against. An unactioned paragraph is not a backlog at all,
+because nothing records that it is owed. **The win is converting gone into pending**, and 130
+visible drafts is a decision where an unknown number of buried requests is not.
+
+**NEGATIVE RESULT — do not give `done()` a `requests` field.** `lessons` was exactly that shape and
+was deleted on the user's call (`01KXKCJW9P26RPPXKCTGDV4BPJ`), and ownership kills it independently:
+a typed list inside an append-only round still has no status, and it would stand beside
+`create_task` as a second way to create a task. **`done()` also cannot warn** — it is an intended
+orphan that writes no tool_result, so nothing said there ever reaches the agent. The doors that do
+reach one are the `result` param's own description, read at the moment the sentence is being
+written, and the system prompt at both ends: *Before calling done("passed")* for the writer,
+*Merging is signing* for the reader.

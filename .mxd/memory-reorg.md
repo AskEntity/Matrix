@@ -271,9 +271,21 @@ entering at a subsystem meets a class name cold with no pointer back.
 
 **Require three parts in the report, because the last two get skipped**: what changed; what was
 CHECKED AND NOT CHANGED, which is a real result that stops the next pass re-deriving it; and what it
-wanted to change but did not. Then own the report — see `01KYT7EYE951TPFSYRJ3QAH2F5`, because the
-findings a cold read uniquely produces are exactly the ones a later reorganisation does NOT
-regenerate, so an unowned report loses only the irreplaceable half.
+wanted to change but did not.
+
+**Part three lands as NODES before the cold read calls `done()`, and the report names their ids**
+(`01KYT7EYE951TPFSYRJ3QAH2F5`). A result round cannot hold owed work — `memory.md` § *A request
+inside a `done()` result is owed to nobody* carries the general rule and the measurement behind it.
+This step is the most expensive place to learn that, because part three is exactly the set no probe
+can reach, and because the reader who produced it is about to stop existing. Measured on the
+2026-07-30 run: of 8 out-of-scope findings, **5 were fixed inside 90 minutes** while the curator was
+still merging, and the 3 still in prose when it closed have been nobody's since.
+
+**Do not defer them to the next regeneration instead.** It is the tempting answer, since that is
+where the material already is, and it fails on latency: a report is a measurement of ONE version,
+the next rewrite rewords every sentence in it, and a cold read's yield is concentrated in defects
+the pass just introduced — which the next pass will not be looking for, being busy introducing its
+own.
 
 ## Judgement calls that keep coming up
 
