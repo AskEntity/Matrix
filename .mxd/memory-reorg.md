@@ -276,11 +276,16 @@ wanted to change but did not.
 **Those three parts have three DIFFERENT destinations, and only the first is obvious.** Part one is
 the commit. **Part two goes into a document, dated and scoped** — the same rule as *when a region
 checks out clean, say so IN the file*, and the report is where it gets skipped most reliably,
-because a clean result feels like the absence of a finding rather than a finding. Part three is
-below.
+because a clean result feels like the absence of a finding rather than a finding. **Part three lands
+as NODES before the cold read calls `done()`, and the report names their ids**
+(`01KYT7EYE951TPFSYRJ3QAH2F5`). A result round cannot hold owed work — `memory.md` § *A request
+inside a `done()` result is owed to nobody* carries the general rule and the measurement behind it.
+This step is the most expensive place to learn that, because part three is exactly the set no probe
+can reach, and because the reader who produced it is about to stop existing.
 
-**What the 2026-07-30 read checked and found clean, on `memory.md` @ `880845ed` (4224 lines).** Do
-not re-derive these; do re-run them against a later version. 118 italic cross-reference spans, every
+**What the 2026-07-30 read checked and found clean, on `memory.md` @ `880845ed` (4224 lines)** — an
+instance of part two, which had never once been recorded. Do not re-derive these; do re-run them
+against a later version. 118 italic cross-reference spans, every
 one resolving to a real heading or region. 40 distinct task ids against 727 nodes — one dangling,
 repaired. 73 path-shaped tokens, all resolving but the four the file itself lists as deleted. 326
 backticked identifiers against tracked source: 20 absent, 19 of them correctly so (deletion records,
@@ -289,12 +294,6 @@ every *"not X, not Y"* pair — worth knowing, because that class is live elsewh
 Positional prose: 17 patterns, ~45 hits, **43 legitimate** — so expect this sweep to be mostly false
 alarms and budget for reading them. Format: 0 attention markers, 138 headings before and after,
 fences even, and every over-wide line a table row.
-
-**Part three lands as NODES before the cold read calls `done()`, and the report names their ids**
-(`01KYT7EYE951TPFSYRJ3QAH2F5`). A result round cannot hold owed work — `memory.md` § *A request
-inside a `done()` result is owed to nobody* carries the general rule and the measurement behind it.
-This step is the most expensive place to learn that, because part three is exactly the set no probe
-can reach, and because the reader who produced it is about to stop existing.
 
 **The two runs bracket the range, and the good one is a coincidence rather than a process.** On
 2026-07-30, 6 of 8 out-of-scope findings were fixed within 90 minutes — every fix committed by the
