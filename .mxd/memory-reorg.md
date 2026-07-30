@@ -252,6 +252,29 @@ context is a compaction boundary, not a deadline, and both this file and `memory
 compaction by construction, so a compacted original strictly dominates a replacement who would
 re-read the same documents without the summary and without any tacit judgement.
 
+**Brief it on METHOD and forbid it every source of CONCLUSIONS** — the rewrite's commit message, the
+curator's session, and the previous cold read's report, which names specific paragraphs and would
+hand over its answers instead of letting the new reader reach their own. Extract the method yourself
+and put it in the description. **Its instinct will be to restore what looks missing, and that
+instinct is wrong at the measured deliberate-to-accidental ratio**, so state the ratio and make
+restoration out of scope: a report costs a paragraph, a wrong restoration is indistinguishable from
+a fix in the diff.
+
+**What a cold read uniquely produces, measured on one run of a freshly rewritten file:** four
+connective repairs, of which **three were defects the rewrite itself had introduced** — a positional
+phrase written the same evening, a direction word whose nearest same-vocabulary heading was BELOW
+it, and a markdown break from the curator's own re-wrapper. **The curator cannot find these**,
+because each one was correct at the moment it was written and the curator is the person who wrote
+it. Its other output is a verdict nothing else can give: whether the file reads as one argument or
+as a collection, and — on that run — that the spine's citation traffic is **one-way**, so a reader
+entering at a subsystem meets a class name cold with no pointer back.
+
+**Require three parts in the report, because the last two get skipped**: what changed; what was
+CHECKED AND NOT CHANGED, which is a real result that stops the next pass re-deriving it; and what it
+wanted to change but did not. Then own the report — see `01KYT7EYE951TPFSYRJ3QAH2F5`, because the
+findings a cold read uniquely produces are exactly the ones a later reorganisation does NOT
+regenerate, so an unowned report loses only the irreplaceable half.
+
 ## Judgement calls that keep coming up
 
 - **`memory.md` has a RATE, not a size, so a line-count target is the wrong instrument.** Measured:
@@ -341,12 +364,17 @@ re-wrap**, so a whitespace-only strip is not invariant and the assertion fires o
 transform — normalise leading `>` away as well. Result here: 529 over-wide lines to 0, content
 proven identical.
 
-Three things about writing that re-wrapper, all of which cost a cycle:
+Four things about writing that re-wrapper, all of which cost a cycle:
 
-- **Its two rules fight.** *No continuation line may begin with `>`, `|`, `#`, `-` or `=`* is fixed
-  by pulling a word down from the previous line, which then makes that line overlong. Chasing both
-  in code loops; the cheap fix is to edit the TEXT so the offending token is not marker-initial
-  (`#14876` became `(#14876)`).
+- **The marker set is not what both documents said it was, and the missing member shipped a bug the
+  cold read caught.** It is `>`, `|`, `#`, `-`, `=` **and a number followed by `.` or `)` AND A
+  SPACE.** A sentence ending *"its message described 14."* put `14. ` at line start, which became an
+  ordered-list item that swallowed the next four lines and left the sentence with no object — while
+  `1.58M.` and `0.02s` in the same file are harmless, because the trailing space is the whole rule.
+- **Its two rules fight.** *No continuation line may begin with a marker* is fixed by pulling a word
+  down from the previous line, which then makes that line overlong. Chasing both in code loops; the
+  cheap fix is to edit the TEXT so the offending token is not marker-initial (`#14876` became
+  `(#14876)`).
 - **A paragraph accumulator that stops at `#`-initial lines will split a paragraph at exactly the
   defect you are hunting**, and it is content-preserving, so no assertion fires and the tool hides
   the bug from itself.
@@ -400,10 +428,21 @@ introduction leaves every other use permanently unreadable, and nothing in the f
 repair it.
 
 **The repair is not to define the term.** Grounding it again re-adds the very material the drop
-correctly removed. Either restore just enough at the SURVIVING site to make the sentence stand
-alone, or delete the clause that depends on it — and prefer the second when the paragraph itself
-says the mechanism is dormant, because a definition maintained for a dormant mechanism is a line
-paid for on every launch forever.
+correctly removed. Three options in order of preference: **cite the TASK that defines it**, which
+costs one bracket and is what this document already tells you to do with an id; restore just enough
+at the SURVIVING site to make the sentence stand alone; or delete the clause that depends on it.
+Prefer deletion over a definition when the paragraph itself calls the mechanism dormant, because a
+definition maintained for a dormant mechanism is a line paid for on every launch forever. **When you
+cite, say what the task GROUNDS** — a draft that never ran defines a name and a symptom and settles
+no measurement, and the search-hit vocabulary exists precisely to stop a proposal reading as a
+record of work.
+
+**And run the orphan check over the REPAIR, not only over the original.** The clause rewritten to
+ground one name here contained a SECOND ungrounded name, in the same sentence, written while
+thinking about grounding — it reads as context rather than as the same bug, because the author is
+attending to the defect they just fixed. `memory.md` carries the general form under *a source audit
+written in the same commit as its fix*: a repair manufactures false positives AND true positives
+nobody re-runs the instrument over.
 
 ### The identifier is not the best anchor available. It is the ONLY one
 

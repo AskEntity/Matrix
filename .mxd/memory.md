@@ -187,6 +187,21 @@ the signature of a broken instrument, not a finding** — 551/551 is not a resul
 validated only where it works reads as verified**: the `ps` proxy was written against a boot where
 nothing else was happening, i.e. in exactly the condition where it cannot fail.
 
+**Every row above reports a ZERO or a PASS, and that is the table teaching half its lesson. The more
+dangerous form is a PLAUSIBLE SMALL POSITIVE, because nobody plants a control against a measurement
+that already looks like it worked.** Measured: an audit of what a whole-file rewrite had lost ran a
+token probe, reported **9 real losses, all restored**, and the true figure was **18** within the
+hour. The probe was fine. The number was honest. **The number is what closed the question** — a zero
+at least looks like something to verify, whereas 9 reads as the yield of a completed adjudication,
+so nobody asks what the adjudication could not see. It could not see a whole category: three of four
+token classes were adjudicated item by item and the fourth was dismissed as a class, because its
+output was sorted by frequency and the generic emphasis words sat at the head, setting the prior for
+a tail they were unrepresentative of.
+
+> **A checker reporting a small plausible number is a claim about the checker exactly as much as one
+> reporting zero, and it will never prompt anyone to say so.** Plant against it too, and state any
+> loss count with a SCOPE CLAUSE naming what was adjudicated and at what granularity.
+
 **Worst is when the rule that suppresses a redundant check is also suppressing the only detector a
 failure mode has** — *"ALWAYS use this for search, NEVER invoke grep via bash"*, on a `search` that
 was blind. For as long as that bug lived, an agent that obeyed got the wrong answer and one that
@@ -302,6 +317,37 @@ ask **who else reads this name**, and go read the constructor of whatever you ha
 And the failure mode that makes this rule actively harmful: **a comment asserting that a sibling
 door is covered.** You read the claim, believe both are covered, and stop looking — the same shape
 as a gate printing a pass.
+
+## A pattern name is a HYPOTHESIS about the situation, never an argument
+
+**Naming a class correctly does not license its remedy, and this rule has cost twice — in the two
+different ways it can fail, one of which survives scrutiny of the name and is therefore worse.**
+
+**MISCLASSIFICATION: the name does not apply.** A prompt line said *"check `get_tree` for closed
+tasks in the same area"*, which is wrong because `get_tree` hides closed by default; changing the
+line to say `search_tasks` was the whole fix. A proposal to ALSO make `get_tree` disclose what it
+filtered was framed as *the half the prompt cannot reach*, root recognised **N of M doors**, and
+approved on the strength of the name. **But that rule is about one RULE enforced at several
+entrances, and nothing was being enforced here** — the note fixed no defect of `get_tree`'s, so it
+was a patch applied at the wrong layer. Cost: zero real defects fixed, plus a nearly-shipped break
+of `get_tree`'s external MCP contract, since it is `availability: "both"` and clients `JSON.parse`
+its text — **a bug that existed only because of the scope expansion.**
+
+**CORRECT CLASS, ABSENT PROPERTY — the one to watch for, because the name holds up.** A proposed
+table of contents for this file was rejected partly on the ground that it is an addition list. It IS
+one. But **a class is dangerous because of a specific property, and an addition list's is that it
+fails SILENTLY** — where a table of contents fails loudly, since entry-matches-heading is
+bidirectionally checkable and the regeneration procedure already diffs the region list. The
+classification was true and carried no force.
+
+> **So the check is not "does this class fit". It is: name the property that makes the class
+> dangerous, then confirm that property is present HERE.** A correct name with the property absent
+> produces a true sentence with no force, and it is more persuasive than a wrong name precisely
+> because it survives every challenge aimed at the name.
+
+The remedy differs by member, which is why they must not be collapsed: *several PARTS of one design*
+and *several ENTRANCES to one rule* feel identical on site, and *Editing the system prompt* works
+that distinction through with its own tell.
 
 ## Start from everything and subtract; never enumerate what to include
 
@@ -452,7 +498,8 @@ codepaths drift silently and nobody knows which one ran. **And the third harm ou
 the dead path's VOCABULARY stays in people's heads**, which is why this file has to keep saying that
 "alternation" names a rule that never existed. The existing shape is not a given either: "why does
 this exist" beats "how do I make this work", and **a "unification" that adds a third path is not a
-unification.**
+unification.** **Test doubles get exempted from all of this by default, because test code reads as
+lower stakes** — four copies of one Anthropic client mock is four places to miss one.
 
 **Do not silently lose coverage when removing duplication.** Unifying two paths shifts
 responsibility: after the live path was made to delegate to the walker, drift tests stopped being
@@ -585,13 +632,14 @@ near the code it describes** — it is injected into an agent that has just lost
 nothing in that agent's context can contradict a stale line: a rule that survives there gets taught,
 fresh, to every compacted agent, and a grep scoped to the subsystem never reaches it.
 
-Three kinds of prose rot, and only the first is findable by re-reading:
+Four kinds of prose rot, and only the first is findable by re-reading:
 
 | kind | wrong when? | found by |
 |---|---|---|
 | **Fabricated** — a claim that was never true | the moment it is written | checking it against reality |
 | **Invalidated** — a true statement about a neighbour | **later**, when the neighbour changes | *nothing you can do by re-reading it* |
 | **Vestigial** — a true statement whose content is a DIFF against a version only the author saw | the moment it is written, and it never stops reading as content | asking what a reader who never saw the old version learns from it |
+| **Drained** — a count or a list that quietly stopped being true | **later**, and nobody thinks they are correcting anything | checking against the source, item by item |
 
 Two directions to be careful in: *"changed nearby" is not "now false"*, and — the one that catches
 more — ***"still true" is not "still accurate"***. One sentence survived as an invariant while the
@@ -1235,7 +1283,8 @@ window is equally load-bearing in the other direction — the summarizer's own t
 collapses to the chain root and needs zero type knowledge — and it is wrong for two independently
 verified reasons. **A compaction is a 2-3 minute window whose outcome is unknown when
 `compact_started` is written**, so if the daemon dies inside it there is no summary but the chain
-root is already committed: the agent resumes with an empty context, `hasWorkContext` is false so a
+root is already committed: the agent resumes with an empty context, so the "have I been briefed"
+check (`hasWorkContext`, which scans the active chain for a `work_context` message) is false, a
 fresh work_context is injected, and it carries on like a newborn. No error, no crash — **silent
 total context loss**, recoverable only by hand-editing JSONL. And the type check has to exist
 anyway, for logs written before `compact_started` existed. The general form, after being talked out
@@ -1389,10 +1438,10 @@ content did not change, so one answer governs both buttons.
 | `hasRewindPoint` | is there a state left to return to? | HISTORY |
 
 `message-editability.ts` is the only place they meet, and **its checkable boundary is that it has
-ZERO imports** — it consumes three verdicts and computes none. **TOMBSTONE: two people tried to
-unify these on the same day. Do not** — see *Taking a PROPERTY of a thing for the thing itself*. The
-three judgments' only shared property is that all three grey the button, which is a fact about
-pixels.
+ZERO imports** — it consumes three verdicts and computes none. **Do not unify them: two people tried
+to on the same day, and both reached for the same wrong reason** — see *Taking a PROPERTY of a thing
+for the thing itself*. The three judgments' only shared property is that all three grey the button,
+which is a fact about pixels.
 
 **The rule is which user turn PICKED THE MESSAGE UP, and the user's own phrasing is the concept:
 *only an independently sent message can be rewound*.** "Run" means something only to someone who has
@@ -1545,8 +1594,12 @@ encrypted original — officially documented, no opt-out. It applies only AFTER 
 and a final assistant answer after all tool use is UNAFFECTED. **Operational mitigation: an agent
 whose last action is a user-facing reply should END ITS TURN rather than call `yield()`**, because
 replying and then yielding in the same turn makes the reply *connector* text; `end_turn` is an
-implicit yield with identical pause semantics. (Scope: this is Fable-class behaviour and matrix has
-been on opus-class since. Treat the mechanism as dormant rather than gone.)
+implicit yield with identical pause semantics. **The user-visible symptom, which is what a reader
+actually arrives holding: the agent's reply vanishes into the thinking fold** — the response is
+`[thinking, thinking, tool_use]`, the second block being a summary of what should have been visible
+text. (Scope: measured on an earlier model generation than the one we run, and treated as dormant
+rather than gone. Draft `01KY54KQ4RXTARSN5ZYMWSVZJ1` **defines the model name and the symptom** — it
+is a proposal that never ran, so it grounds the vocabulary and not a measurement.)
 
 > **"Context = `messages[]`" is FALSE under this mechanism, and the model cannot detect the
 > divergence from inside.** The model sees its own originals; the client and the user hold only
@@ -2012,9 +2065,9 @@ GLOBAL fetch stub is not the fix, because it makes the decoy unreachable and *"t
 nothing"* becomes a tautology. **A trap that cannot be triggered is not a trap.** The shape that
 works is a stub refusing EXACTLY ONE host and forwarding everything else, plus a POSITIVE assertion
 that the blocked request really targeted that host. This justified deleting three fetch-interception
-describes that the receiver version subsumes; **the provider constructor's own sentinels were
-KEPT**, because no door reaches that client without running a loop. **Check which door each test
-actually reaches before calling it redundant.**
+`describe` blocks that the receiver version subsumes; **the provider constructor's own sentinels
+were KEPT**, because no door reaches that client without running a loop. **Check which door each
+test actually reaches before calling it redundant.**
 
 ### The fixture underneath it is only as wide as its callback's synchronous prefix
 
@@ -2104,9 +2157,11 @@ inherit.** The precedence is `global < repo < local`: `resolveConfig(base, ...ov
 `value !== undefined`, so `""` IS an overriding value — and **global is the BASE at all three
 production sites (`daemon.ts`, `runtime/helpers.ts`, `cli.ts`)**, so an empty global value can never
 climb over a project's while the reverse is reachable and pinned by a test. **The direction was
-asserted backwards twice in one evening**, wrapped in a *correctly recalled* mechanism, which is
-what makes a wrong direction look checked. **Detector: for any "A overrides B" claim, name which of
-them is the function's FIRST argument.**
+asserted backwards twice in one evening — with the `global < repo < local` line sitting right there
+above it, read past both times** — and wrapped in a *correctly recalled* mechanism, which is what
+makes a wrong direction look checked. **So writing the fact down is not the fix**, and that is the
+whole reason there is a detector: for any "A overrides B" claim, name which of them is the
+function's FIRST argument.
 
 **The axis that decides which layer may hold a field is TRUST, not scope.** `model` and
 `defaultAuth` are settable on **global** and on **local**, and are **not rendered at all** on the
@@ -2124,6 +2179,11 @@ Against, decisively: it is **not broken the way the other two were** — clearin
 inherit and the inherited value renders as the placeholder. **A number has no `""` state, so "empty"
 there can only mean absent**; the ambiguity the user objected to requires a competing legal empty
 value, which a number does not have.
+
+**The two that WERE broken share one rule: a 3-state value cannot live on a 2-state checkbox — the
+inherit state needs its own control**, which is why both now share one `InheritToggle`. A checkbox
+can DISPLAY a third state and has no way to RETURN to it, so the state is reachable only until the
+user's first click.
 
 Three consequences of the projection that will look like bugs. **A repo write now NORMALIZES a
 git-tracked file** — the loader strips and the saver writes what it was handed, so the next write
@@ -2294,17 +2354,18 @@ That rule came from five bugs found together, all silent data loss rather than a
 does NOT throw on a live `session`** — SSE's `structuredClone` is *forced* to strip it, so the SSE
 path was safe by accident while every REST route returning a node serialized the whole queue,
 conversation and AbortController over the wire; **one transport's safety came from a constraint the
-other transport did not have.** **Worktree removal must use the STORED path and branch, never a
-re-slugified title**, because a title can change after creation and the real worktree is then
-orphaned forever. **A config write must never be able to wipe credentials**, which took three fixes
-because there were three doors: `PATCH /config/global` rejects null for any top-level field;
-`createDaemon` RETHROWS a load failure instead of falling back to defaults, because the silent
-fallback booted with empty `authGroups` and the next save overwrote the on-disk credentials with
-nothing; and `loadGlobalConfig` distinguishes ENOENT (fresh install → defaults) from a read error or
-invalid JSON. **`delete_task` must stop and await the running loop before cleanup** — it did neither
-what close does nor what reset does, so it removed the worktree under a live process, destroying
-unmerged work, and a pending `done()` then read `getTask() === undefined` in Phase 2 and hung the
-parent forever.
+other transport did not have.** One `serializeNode` helper now wraps every node response, so the
+remedy is findable by anyone who hits the hazard. **Worktree removal must use the STORED path and
+branch, never a re-slugified title**, because a title can change after creation and the real
+worktree is then orphaned forever. **A config write must never be able to wipe credentials**, which
+took three fixes because there were three doors: `PATCH /config/global` rejects null for any
+top-level field; `createDaemon` RETHROWS a load failure instead of falling back to defaults, because
+the silent fallback booted with empty `authGroups` and the next save overwrote the on-disk
+credentials with nothing; and `loadGlobalConfig` distinguishes ENOENT (fresh install → defaults)
+from a read error or invalid JSON. **`delete_task` must stop and await the running loop before
+cleanup** — it did neither what close does nor what reset does, so it removed the worktree under a
+live process, destroying unmerged work, and a pending `done()` then read `getTask() === undefined`
+in Phase 2 and hung the parent forever.
 
 Lifecycle guards that were simply missing: the **root node** cannot be deleted, closed or reset;
 `updateTaskOp` rejects `status: "closed"` and `"failed"`, because both are terminal states needing
@@ -2496,7 +2557,12 @@ company.**
 rather than an unfinished investigation.** A length threshold would invite chunking, capping, or
 probing at the boundary — any of which could be made to look like it works. **NEGATIVE RESULTS on
 the CoreML knobs, so nobody spends the afternoon again**: `mlComputeUnits: CPUOnly` / `CPUAndGPU`,
-`modelFormat: MLProgram`, and `allowLowPrecisionAccumulationOnGPU: "0"` — every one still NaN.
+`modelFormat: MLProgram`, and `allowLowPrecisionAccumulationOnGPU: "0"` — every one still NaN. **The
+one that is NOT NaN is `coreml` + `dtype: "fp16"`, because there is nothing left to convert — and it
+changes no decision, since fp16 doubles the weights and `webgpu` + `fp16` does not even load.** That
+exception is the load-bearing member of this list: without it the list enumerates every knob that
+fails and omits the only one that works, so it stops preventing the afternoon and starts aiming the
+reader at it.
 
 > **webgpu is chosen for CPU CONTENTION, not for wall-clock — and on the real corpus it is 30%
 > SLOWER in wall-clock.** Full rebuild of 1115 documents: **cpu 697s wall / 3044s CPU; webgpu 909s
@@ -2522,7 +2588,17 @@ for one day: `create_task` called 8 times, block returned 8 times, behaviour cha
 
 > **Put the guidance where the decision is made. If the agent ASKED for the data, the tool
 > description reaches it in time — it still holds the intent it called with. If the data arrives
-> UNREQUESTED, only the payload reaches it.**
+> UNREQUESTED, only the payload reaches it. And if NO CALL HAPPENS AT ALL, only the system prompt
+> reaches it.**
+
+**The third arm is the one that assigns the prompt its role, and it is the case the other two cannot
+cover**: the agent does not recognise that the question in its hand is one the code can never
+answer, so there is no payload and no description in view at that moment. **The freeze argument
+applies to the prompt too and does NOT settle it.** `session_config` freezes the system prompt
+exactly as it freezes tool descriptions, so a prompt edit also reaches a running agent only after a
+compaction — which prices **urgency, not medium**. Handler output wins where the fix has to work
+*today*; a standing disposition can wait one compaction, and a prompt line that is *wrong* is frozen
+too, which argues for landing the fix rather than deferring it.
 
 **The bash "don't pipe" precedent does NOT transfer**: that decision is made while CONSTRUCTING the
 call, so the description is its decision moment. A description read before the call is guidance
@@ -2740,10 +2816,12 @@ hook wired", never "is a gate wired" — list the directory.**
 Two decisions that look like details. **The id comes from git config, never from parsing the
 worktree path**: the path shape has changed before, and config is where a worktree's identity
 durably lives. And `--if-exists doNothing` makes an inherited `Task-Id` win over ours, because one
-commit carrying two ids makes `%(trailers:key=Task-Id)` answer ambiguously for every consumer. **The
-hook never exits non-zero**: a failing `prepare-commit-msg` aborts the commit, so a bug in there
-takes away the one thing an agent needs in order to fix it. **Root's own commits carry no trailer**,
-because root works in the main worktree; accepted, root's id is a constant.
+commit carrying two ids makes `%(trailers:key=Task-Id)` answer ambiguously for every consumer — **a
+trailer arrives inherited via `git commit -c` and via cherry-pick, and naming those is what stops
+the flag reading as a guard against a case that cannot arise.** **The hook never exits non-zero**: a
+failing `prepare-commit-msg` aborts the commit, so a bug in there takes away the one thing an agent
+needs in order to fix it. **Root's own commits carry no trailer**, because root works in the main
+worktree; accepted, root's id is a constant.
 
 ### `git interpret-trailers` has its own opinion about where a message ENDS
 
@@ -3893,6 +3971,18 @@ expression as the thing that was wrong — so the instrument fires on prose that
 the fix happened*. **Skip comment-opening lines.** Rewording the prose instead is the wrong repair:
 it teaches the next person that the audit is the thing to bend.
 
+**That has a twin pointing the other way, and neither is visible from inside the other. A repair
+manufactures FALSE positives — and it also manufactures TRUE positives the instrument is never run
+over again.** Measured on the same evening: a clause was rewritten to stop an ungrounded name from
+being unreadable, and the replacement clause contained a SECOND ungrounded name, in the same
+sentence, written by the same hand while thinking about grounding. It shipped as far as review. **A
+repair is written by someone attending to the defect, which is exactly when another instance of it
+reads as context rather than as the same bug.**
+
+> **So the one instruction has two limbs: after a repair, re-run the check over the REPAIRED text.
+> It will fire on prose your fix created, and it will catch the defect your fix introduced.** Only
+> the first limb feels necessary at the time, and only the second one is silent.
+
 ## Type errors that were all casts, and the gate that never ran
 
 Twenty-four `tsc` errors accumulated across six merges, and the shape of the fix is the transferable
@@ -4097,8 +4187,12 @@ second time — which is exactly what a regeneration exists to remove. Search a 
 collapse newlines first.
 
 Two more facts about that hard wrap, both of which cost a cleanup pass. **A wrapped line must never
-BEGIN with `>`, `|`, `#`, `-` or `=`**: markdown reads those as block markers before it ever sees
-the inline code span they were part of. And **"100 columns" is not one measurement** — bytes, code
+BEGIN with `>`, `|`, `#`, `-`, `=`, or a number followed by `.` or `)` AND A SPACE**: markdown reads
+those as block markers before it ever sees the inline code span they were part of. The trailing
+space is the whole rule and the reason a re-wrapper written without it ships a bug — a sentence
+ending *"its message described 14."* put `14. ` at line start, which silently became an ordered-list
+item that swallowed the next four lines and left the sentence with no object, while `1.58M.` and
+`0.02s` in the same file are harmless. And **"100 columns" is not one measurement** — bytes, code
 points and display columns all differ here, because the file carries Chinese in its decision quotes
 and a CJK character is one code point occupying two columns. Wrap against code points and check the
 result.
@@ -4127,8 +4221,10 @@ putting a claim next to its refutation is a move you can actually perform; **a p
 argument, and two sentences sixty lines apart are never brought together by anything.** It does not
 present as a conflict either — both are individually true and well written, and they only cancel
 when someone holds both at once, which is exactly what the linear form prevents. Observed in two
-commits one session apart, same author. **So read the recent prompt DIFFS before editing, then
-re-read the whole thing.**
+commits one session apart, same author — **and the round that INTRODUCED the contradiction had
+substituted a targeted grep for the full read**, which is the mechanism rather than a detail: a grep
+finds the line you are changing and can never surface the line sixty lines away that it cancels.
+**So read the recent prompt DIFFS before editing, then re-read the whole thing.**
 
 **Neither document uses attention markers.** Measured on `src/system-prompts.ts`: zero of them in
 459 lines, against 86 `**bold**` and 39 all-caps, with its hardest rules carried by bold plus one
