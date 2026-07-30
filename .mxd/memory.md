@@ -4548,8 +4548,9 @@ refuses. *Global config is a COMPLETE config* and *empty is invalid* cannot both
 
 Deleting our `?? process.env.ANTHROPIC_API_KEY` did **not** stop a shell-held key from reaching the
 API. The Anthropic SDK's constructor does `if (apiKey === undefined) apiKey = readEnv(...)`, and the
-same for `ANTHROPIC_AUTH_TOKEN`, so with zero env reads left in `src/` a client built with empty
-opts still carries whatever the shell holds. What our deletion actually removed was the BRANCH
+same for `ANTHROPIC_AUTH_TOKEN`, so with zero env reads left in `src/`,
+`new AnthropicCompatibleProvider(model, {})` still yields a client whose `apiKey` is whatever the
+shell holds. What our deletion actually removed was the BRANCH
 CHOICE: a truthy `apiKey` sets `useOAuth = false`, so before it an ambient key silently outranked the
 OAuth token the user had configured.
 
@@ -4644,7 +4645,9 @@ the consequence is vendor-documented rather than inferred: *"If no header is pro
 organization will be billed."* It was surveyed and reported before it was fixed
 (`01KYSD71GAYKD5AAT48C0MFKQN`), which is why the finding and the decision are dated a day apart. **That is env deciding billing attribution**, which is why it belongs
 to a rule about credentials although neither field is one. Both are pinned to `null` now (user:
-「env 不许决定」). `apiKey` and `baseURL` were already clean because we always pass them — but that
+「env 不许决定」). MEASURED on our real call shape with the shell holding all four names:
+`openai-organization` and `openai-project` arrived as the shell's values on every request, and with
+the two `null`s neither header appears. `apiKey` and `baseURL` were already clean because we always pass them — but that
 was a side effect of other requirements rather than a decision, so the test asserts all four names.
 
 **One asymmetry to keep true rather than work around: `apiKey`'s type is `string | ApiKeySetter |
@@ -4683,6 +4686,15 @@ error that reads like a bad credential. Passing a function is also the only way 
 once (`01KYSE0N667GMYDC81057J3NX8`) on the correct ground that it is a behavioural change needing a
 test that drives a real retry and asserts the SECOND request carries a NEW token; that is exactly the
 test that now pins it.
+
+**Moving a capability from per-N to per-M needs a fixture holding TWO M's inside ONE N, and every
+weaker assertion is green against both implementations.** "The function was passed" and "the function
+was called once" are both true of the static string — one call, one resolve, either way. What works:
+rewrite `auth.json` from inside the fetch mock, answer the first attempt with 500 plus
+`retry-after-ms: 0`, and assert the SECOND request carried the SECOND token. Against the
+resolved-string mutant exactly ONE test in the repo goes red and its message IS the diagnosis
+(`"Bearer first-token"` twice). `retry-after-ms: 0` is what keeps it at 2.7ms — the same shape on a
+bare 429 costs 397ms of the SDK's own backoff.
 
 **The line, and it is not "everything goes to the SDK": the token goes to the SDK, the account id
 stays ours.** `ChatGPT-Account-Id` is a header and `defaultHeaders` is fixed when the client is built,
