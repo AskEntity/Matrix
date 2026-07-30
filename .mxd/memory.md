@@ -4751,3 +4751,47 @@ in a data dir produces a plist launchd cannot parse, and **that failure arrives 
 install.** Apple's own parser is the acceptance check for it (`plutil -lint`, `plutil -extract
 EnvironmentVariables.MXD_DATA_DIR raw`), used by hand rather than in the suite, since it exists
 only on darwin.
+
+## The credential goes to the openai SDK as a FUNCTION, and only a RETRY can tell that apart
+
+**The SDK's `apiKey` slot is `string | ApiKeySetter | undefined`, `ApiKeySetter = () =>
+Promise<string>`, and a function there is invoked before EVERY request** — `makeRequest` awaits
+`prepareOptions` → `_callApiKey` → `authHeaders`, and `retryRequest` re-enters `makeRequest`. We had
+hand-built precisely that shape as `OpenAICredentialSource`, then resolved it ourselves and handed
+the SDK a static string, **downgrading a per-REQUEST capability to per-TURN.** `maxRetries` is 2, so
+one call sends up to three HTTP requests on one token while codex rotates `auth.json` on its own
+schedule: the retry re-sent a token that had just been rotated away, and collected an auth error
+that reads like a bad credential.
+
+⚠️ **THE LINE, and it is not "everything goes to the SDK": the token goes to the SDK, the account id
+stays ours.** `ChatGPT-Account-Id` is a header and `defaultHeaders` is fixed when the client is
+built, so `streamResponsesAPI` still resolves the source once for it. That resolve pays twice — it
+is also where an unreadable credential fails with OUR message, instead of inside the SDK's `Failed
+to get token from 'apiKey' function: …` wrapper (which does preserve the full text, and the original
+in `cause`). Passing a function is ALSO the only way to stop `OPENAI_API_KEY` filling that slot,
+since its type has no `null`. MEASURED with a real token as the positive control: a setter returning
+`""` throws and **zero requests leave the process**, where the static `""` it replaced sent
+`Bearer ` and collected a misleading 401. Deliberately NOT pinned by a test —
+`openAICredentialSource` cannot produce an empty token, so the test would only assert the SDK's
+behaviour.
+
+⭐ **Moving a capability from per-N to per-M needs a fixture holding TWO M's inside ONE N; every
+weaker assertion is green against both implementations.** "the function was passed" and "the
+function was called once" are both true of the static string — one call, one resolve, either way.
+What works: rewrite `auth.json` from inside the fetch mock, answer the first attempt with 500 plus
+`retry-after-ms: 0`, assert the SECOND request carried the SECOND token. Against the
+resolved-string mutant exactly ONE test in the repo goes red and its message IS the diagnosis
+(`"Bearer first-token"` twice). ⚠️ `retry-after-ms: 0` is what keeps it at 2.7ms — the same shape
+on a bare 429 costs 397ms of the SDK's backoff.
+
+⭐ **A fixture built for a case that did not exist became the only thing keeping a test able to
+fail, ONE DAY later.** `withClientEnv` defers its env restore when the callback returns a promise,
+and the note shipped with it said this "changes no outcome at any of today's four doors" because
+every client was built in the callback's synchronous prefix. Putting `await credentials()` above
+`new OpenAI(...)` moved the OpenAI door into the fragile row. MEASURED both ways, with the
+`organization: null, project: null` deleted so production genuinely leaks: **deferral intact → RED,
+naming both shell headers; deferral removed → the same vulnerable production reports CLEAN.** This
+does not soften *an optimisation for a case your fix eliminates is dead code that looks like
+foresight* — the difference is that the deferral deleted a CLASS (any await upstream of any client
+construction) rather than serving a scenario, and a class does not stop existing when today's
+callers happen to miss it.

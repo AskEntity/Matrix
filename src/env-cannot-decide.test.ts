@@ -48,6 +48,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { staticCredential } from "./codex-auth.ts";
 import { DEFAULT_CONFIG, type MatrixConfig } from "./config.ts";
 import { createLLM } from "./llm.ts";
 import { streamResponsesAPI } from "./openai-responses-compatible-provider.ts";
@@ -422,7 +423,7 @@ describe("env cannot decide the endpoint or the credential (receiver-side)", () 
 		await withClientEnv(shellFullOfEnv(decoy.url), async () => {
 			const gen = streamResponsesAPI({
 				endpoint: `${target.url}/v1/responses`,
-				authToken: "configured-token",
+				credentials: staticCredential("configured-token"),
 				body: {
 					model: "gpt-4.1-mini",
 					instructions: "test",

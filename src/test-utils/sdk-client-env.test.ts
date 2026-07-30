@@ -6,19 +6,21 @@
  * clean. Nothing else in the suite can tell that apart from a real result, so
  * the fixture needs its own tests.
  *
- * ⚠️ MEASURED 2026-07-30, and it is why the async deferral exists even though it
- * changes no outcome at any of today's four doors. Where the client is built
- * decides whether a restore-on-return fixture can see anything:
+ * ⚠️ MEASURED 2026-07-30. Where the client is built decides whether a
+ * restore-on-return fixture can see anything at all:
  *
  *   sync callback                      → env visible   (llm.ts's createLLM)
  *   async fn, before its first await   → env visible   (check_model via app.request)
- *   async generator, first next()      → env visible   (streamResponsesAPI)
- *   async fn, AFTER an await           → env GONE
+ *   async generator, first next()      → env visible
+ *   anything AFTER an await            → env GONE      (streamResponsesAPI)
  *
- * All four doors happen to sit in the visible group, so every one of these
- * fixtures currently works by an accident of where the first `await` sits. Add
- * one `await` upstream of a client construction and the fixture goes green and
- * blind. The deferral removes that whole class, and this file is what pins it.
+ * ⭐ That last row acquired its first real occupant the DAY the deferral was
+ * written off as changing no outcome: `streamResponsesAPI` now awaits the
+ * credential source for the account-id header before constructing the client.
+ * Measured with the org/project `null`s deleted, so production genuinely leaks —
+ * deferral intact, the OpenAI door test is RED; deferral removed, the same
+ * vulnerable production reports clean. **A fixture built for a case nobody had
+ * yet is what kept that test able to fail.**
  */
 
 import { describe, expect, test } from "bun:test";
