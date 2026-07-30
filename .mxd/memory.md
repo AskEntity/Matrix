@@ -4003,96 +4003,151 @@ to the gate — so **the baseline is not holed by this commit**; two real bare s
 the repo without ever having been counted.
 
 
-## Reading a field with `?? ""` destroys a state the storage layer represents
 
-**DECIDED 2026-07-29 (user), and it settles the question the DEFAULT_MODEL deletion left open:
-*"global auth 默认是空白，model 是 `""`. project 和 local 的话 auth 默认是 undefined，ui 表现为 tick 了
-inherit，选择框消失"*.** So the three-layer semantic is now stated end to end: **global is a COMPLETE
-config, so every key is present and "not chosen yet" is `""`; overlays are `Partial`, so an ABSENT
-key is inherit.** `""` is therefore load-bearing at the global layer — a second reason, on top of
-the earlier boundary, not to touch what it means in `resolveConfig`.
+## Config: three layers, three TYPES, and "not chosen" is an absent key rather than an empty one
 
-**The UI bug the user reported is one operator: `(draft.model as string | undefined) ?? ""` at
-READ time.** Past that line `undefined` (inherit) and `""` (an explicit empty override) are one
-value, so the state could not be rendered — and, worse, could not be EXITED: typing then deleting
-left `""` in the draft and no gesture anywhere set it back to `undefined`, making the panel a
-one-way door into an empty override. **This is *Two situations, one observation* in the UI layer,
-and it is the instance that shows the collision is not only a diagnosis problem: once two states
-share one value, a control built on that value cannot REACH one of them.** **Derive the state from
-the raw value FIRST, then coalesce for the control** — the reverse order is what erases it.
+Everything in this area comes from one decision, and it is worth reading before any of the
+mechanics, because it retired an argument rather than settling it. **DECIDED 2026-07-29 (user):
+"三层各有自己的类型…如果你设置的 config 你的 field 里没有,自然而然就不对了。以后不需要再纠结
+validation 了。"** `RepoConfig` and `LocalConfig` are computed from ONE classification table in
+`src/config.ts`, and each loader projects its file onto that layer's field set. **A field outside a
+layer's set does not exist after the read, so nothing downstream has to reject it** — and every
+argument that used to surround this (which fields a guard should hold, whether `GLOBAL_ONLY_FIELDS`
+is its home, whether `null` / `""` / absent is legal) loses its subject, because all of it came from
+ONE type serving three layers with different semantics.
 
-**CORRECTION to the first version of this entry, which said the panel "already had the right
-convention one screen away" and quoted `SettingBoolField`'s *"Three states: undefined (inherit),
-true, false / indeterminate = inherit"*. That comment describes a control that was never built:
-`indeterminate` is set NOWHERE in the file, and the onChange was `{ [field]: e.target.checked }`,
-which always writes a boolean — so the third state could be DISPLAYED (a small "(inherited)") and
-never returned to. One click and the field was explicitly set forever.** What the panel actually had
-one screen away was the right *vocabulary*, the right *display*, and **the same one-way door**. Both
-fields are fixed now, sharing one `InheritToggle`, because a 3-state value cannot live on a 2-state
-checkbox — the inherit state needs its own control.
+**The instinct it replaces is a blacklist plus a filter, which is the same defect relocated** — one
+more field list to maintain, one more N-of-M-doors argument. The test for whether you built the right
+thing: the types must be COMPUTED from the classification so the two cannot disagree, and `satisfies
+Record<keyof MatrixConfig, …>` must make an unclassified new field a compile error. That one
+declaration also feeds both write doors' refusal WORDING and the read-path log, so a user meets the
+same sentence whichever way they arrived.
 
-**A comment naming three states is not evidence of three states.** That quote was read as a
-measurement and relayed as one, which is the same failure as *"The CLI has the same check
-client-side"* in the paragraph below — **twice in one evening, a comment was passed along as a
-verified fact, and both times it described a sibling mechanism that did not exist.** The damage is
-identical in shape to a gate printing a pass: you believe the thing is covered and **stop looking**.
-The check is cheap and it is the one that was skipped both times — **grep for the mechanism, not for
-the sentence claiming it** (`indeterminate` → zero hits; the CLI's guard → `GLOBAL_ONLY_FIELDS`
-only).
+**The semantic, end to end (user, same evening):** "global auth 默认是空白，model 是 `""`. project 和
+local 的话 auth 默认是 undefined，ui 表现为 tick 了 inherit，选择框消失". So **global is a COMPLETE
+config, every key present, and "not chosen yet" is `""`; the overlays are `Partial`, so an ABSENT key
+means inherit.** `""` is therefore load-bearing at the global layer, which is a second reason not to
+touch what it means in `resolveConfig` — and `resolveConfig` overlays on `value !== undefined`, with
+global as the BASE at all three production sites, so an empty global value can never climb over a
+project's while the reverse is reachable and pinned.
 
-**DECIDED — `SettingNumberField` KEEPS the implicit "empty box = inherit" convention, considered
-rather than missed.** It is a third convention in one panel, which is a real cost, and it is the one
-argument for converting it. Against, decisively: it is **not broken the way the other two were** —
-`e.target.value ? Number(...) : undefined` already round-trips, so clearing the box returns to
-inherit, and the inherited value already renders as the placeholder. **A number has no `""` state,
-so "empty" there can only mean absent** — the ambiguity the user objected to requires a competing
-legal empty value, which is exactly what `model` and `defaultAuth` had and a number does not. Adding
-a tickbox would be a second way to reach a state the control can already reach.
+**The UI bug this produced was one operator: `(draft.model as string | undefined) ?? ""` at READ
+time.** Past that line `undefined` (inherit) and `""` (an explicit empty override) are one value, so
+the state could not be rendered — and, worse, could not be EXITED: typing then deleting left `""` in
+the draft and no gesture anywhere set it back to `undefined`, making the panel a one-way door into an
+empty override. **Derive the state from the raw value FIRST, then coalesce for the control**; the
+reverse order is what erases it. This is *Two situations, one observation* in the UI layer, and it is
+the instance showing the collision is not only a diagnosis problem: **once two states share one
+value, a control built on that value cannot REACH one of them.**
 
-**The legal field sets of the two PROJECT layers differ, and the axis is TRUST rather than
-scoping.** `model` and `defaultAuth` are settable on **global** and on **local**, and are **not
-rendered at all** on the **project** tab — because the repo layer is
-`<projectPath>/.mxd/config.json`, git-tracked and **arriving with `git clone`**, so a repo you
-cloned could otherwise choose the model and the auth group every later agent run uses. The local
-layer under `~/.mxd/` never enters a repo.
-**That is why `GLOBAL_ONLY_FIELDS` is the wrong home for the rule: the field is not global-only, it
-is not-from-the-repo** — and it is why the three tabs are not variations of one form.
-`rejectCredentialFields` is layer-aware for the same reason (repo refuses `defaultAuth`, local
-allows it, `authGroups` refused on both).
+**CORRECTION to the first account of this, which said the panel "already had the right convention one
+screen away" and quoted `SettingBoolField`'s comment about three states.** That comment described a
+control that was never built: `indeterminate` is set NOWHERE in the file, and the onChange always
+wrote a boolean — so the third state could be DISPLAYED and never returned to. One click and the
+field was explicitly set forever. What the panel actually had one screen away was the right
+*vocabulary*, the right *display*, and **the same one-way door**. Both fields share one
+`InheritToggle` now, because a three-state value cannot live on a two-state checkbox — the inherit
+state needs its own control. **A comment naming three states is not evidence of three states**; see
+*A stored explanation expires* for the class and for the cheap check that was skipped twice in one
+evening — grep for the mechanism, not for the sentence claiming it.
 
-**On the way there, a guard was found sitting on one of two doors with the other one open, and
-what it actually did was break the UI.** Its comment claimed *"The CLI has the same check
-client-side"* — measured false: `mxd config set defaultAuth <name> --project` tests only
-`GLOBAL_ONLY_FIELDS` and writes straight to `.mxd/config.json`, while the same CLI's default path
-goes through the endpoint and 400s. Meanwhile the guard made **every** Root Auth change on a project
-tab fail, the option labelled "inherit" included, because that option's value was `""`. **Before
-pricing a guard's removal, measure what the other doors already allow — and check whether the thing
-it is really stopping is your own UI.** The deeper hole it never covered (a cloned repo config is
-read by `loadProjectRepoConfig`, never through `PATCH`, and `authGroups` is replaced wholesale by
+**DECIDED — `SettingNumberField` KEEPS the implicit "empty box = inherit" convention.** It is a third
+convention in one panel, which is the one real argument for converting it. Against, decisively: it is
+**not broken the way the other two were** — `e.target.value ? Number(...) : undefined` already
+round-trips, clearing the box returns to inherit, and the inherited value renders as the placeholder.
+**A number has no `""` state, so "empty" there can only mean absent**; the ambiguity the user objected
+to requires a competing legal empty value, which `model` and `defaultAuth` had and a number does not.
+
+### The axis that decides which layer may hold a field is TRUST, not scope
+
+`model` and `defaultAuth` are settable on **global** and on **local**, and are **not rendered at all**
+on the **project** tab — because the repo layer is `<projectPath>/.mxd/config.json`, git-tracked and
+**arriving with `git clone`**, so a repo you cloned could otherwise choose the model and the auth
+group every later agent run uses. The local layer under `~/.mxd/` never enters a repo. **That is why
+`GLOBAL_ONLY_FIELDS` is the wrong home for the rule: the field is not global-only, it is
+not-from-the-repo** — and it is why the three tabs are not variations of one form.
+`rejectCredentialFields` is layer-aware for the same reason (repo refuses `defaultAuth`, local allows
+it, `authGroups` refused on both).
+
+**Counting doors is not enough — ask whether every door is a WRITE.** For *how can `defaultAuth` reach
+the repo layer*, there are three: `PATCH …/config/repo` (guarded), `mxd config set --project` (never
+guarded — it writes `.mxd/config.json` directly, bypassing the daemon), and **`git clone`, where the
+file simply arrives and there is no write moment to guard at all.** So **no set of write-door guards
+can ever be complete here**, which is what turns a read-boundary projection from the tidier option
+into the only one that finishes the job. The generalisation to carry past this case: *N-of-M-doors*
+silently assumes every door is an operation you can intercept, and **when one door is "the state was
+already there when we arrived", enforcement has to move to the READ.**
+
+On the way there, a guard was found sitting on one of two doors with the other open, and what it
+actually did was break the UI. Its comment claimed *"The CLI has the same check client-side"* —
+measured false: `mxd config set defaultAuth <name> --project` tests only `GLOBAL_ONLY_FIELDS` and
+writes straight to `.mxd/config.json`, while the same CLI's default path goes through the endpoint
+and 400s. Meanwhile the guard made **every** Root Auth change on a project tab fail, the option
+labelled "inherit" included, because that option's value was `""`. **Before pricing a guard's
+removal, measure what the other doors already allow — and check whether the thing it is really
+stopping is your own UI.** The deeper hole it never covered (a cloned repo config is read by
+`loadProjectRepoConfig`, never through `PATCH`, and `authGroups` is replaced wholesale by
 `resolveConfig` rather than merged) is `01KYQYRXST632196G3FNWTWF1X`, and it is hardening rather than
 a vulnerability: **there is no sandbox, so a hostile repo already owns you once an agent reads it.**
 
-**Counting doors is not enough — ask whether every door is a WRITE.** For *how can `defaultAuth`
-reach the repo layer*, there are three: `PATCH …/config/repo` (guarded), `mxd config set --project`
-(never guarded — writes `.mxd/config.json` directly, bypassing the daemon), and **`git clone`, where
-the file simply arrives and there is no write moment to guard at all.** So **no set of write-door
-guards can ever be complete here**, and that is what turns a read-boundary filter from the tidier
-option into the only one that finishes the job. The generalisation worth carrying past this case:
-*N-of-M-doors* silently assumes every door is an operation you can intercept. **When one door is
-"the state was already there when we arrived", enforcement has to move to the READ.**
+### Consequences of the projection that will look like bugs
 
-**And that same false comment carries a second, separate lesson: a comment asserting that a
-sibling door is covered makes the doors rule actively misleading.** The failure mode is not that you
-miss a door — it is that you read the claim, believe both are covered, and **stop looking**, the
-same shape as a gate printing a pass. Root relayed it to a sub-task as fact and the sub-task found
-it false by measuring. Two config claims were asserted in one evening without checking, and this is
-the one that cost more, **because it came with a citation**.
+**A repo write now NORMALIZES a git-tracked file.** The loader strips and the saver writes what it
+was handed, so the next `PATCH …/config/repo` or `mxd config set --project` silently removes a stale
+`model` from `.mxd/config.json`. Intended for a KNOWN field — the key was already doing nothing — but
+it is a diff nobody asked for, in somebody's tracked file.
+
+**A key NO layer declares is dropped the same way, and carrying it was considered and REJECTED**
+(user, 2026-07-29). The hazard is real and was traced: `.mxd/config.json` is git-tracked and the saver
+writes back what the loader handed it, so an older matrix editing one field deletes a field a NEWER
+matrix wrote, as an ordinary commit. **The user's answer is that this is a missing-versioning problem,
+not a loader problem** — "现在我们并没有 proper 的 versioning…以后有 versioning 之后,自然而然的
+如果你读到新版本 应该说让你去更新" — reading a newer config should say *upgrade your matrix* rather
+than absorb it silently. Filed as `01KYR23QK9E4CJDD7XKV8Q1CE5`, deliberately not built here.
+
+**The reusable half, and it is root's rather than mine: a consequence traced correctly does not make
+the fix derived from it correctly priced.** The trace above was right. The remedy proposed from it —
+"keep the unknown key, one branch" — was not one branch: `asLayerConfig` returns `LayerConfig<L>`, so
+passing unknown keys through either makes that return type a lie for everything downstream or needs
+them held aside on read and re-merged at save, i.e. a preservation channel through read→edit→write in
+three functions, for a case that has never occurred. **The correctness of the diagnosis lends nothing
+to the price of the cure, and a cost stated as one branch by the person who wants the cure is the one
+to re-derive.**
+
+**Look a classification table up through a `Map`, never property access on the object literal.**
+`TABLE["__proto__"]` answers with `Object.prototype`, which is TRUTHY, so every prototype-chain name
+(`__proto__`, `constructor`, `toString`) resolves to a bogus entry and is classified by whichever
+branch its undefined flags happen to fall into. It is not only a wrong sentence: `JSON.parse` yields
+`__proto__` as an OWN key, so a key that passes the check is then ASSIGNED to the result object, where
+`__proto__` is a setter rather than a property. **Found by a test asserting the refusal's WORDING** —
+every prototype name was already being refused, for a reason that was not the true one, which is
+exactly the shape *is the rule being ENFORCED the same rule that is DOCUMENTED* warns about.
+
+**Three negative results, so nobody re-opens them.** Stripping `authGroups` from the LOCAL layer is
+not a new policy: `Partial<Omit<MatrixConfig, GLOBAL_ONLY_FIELDS>>` has excluded it from BOTH project
+layers since it was written, and only the runtime disagreed, because `resolveConfig` spreads the keys
+an object REALLY has while the loaders were bare `readJsonConfig` calls — so this made the runtime
+agree with a type that was already declared, which is why it needed no new rule. `mcpServers`
+shallow-merging in from the repo layer **stays exactly as it is** ("mcp 你就别添油加醋了
+这个保持现状"); root raised the `command`/`args`-get-spawned concern and was overruled. And
+`budgetUsd` / `thinkingEffort` are cost levers that would belong to the same trust principle if it
+were ever systematised; they were deliberately not circled, so they are candidates rather than
+licence.
+
+**A test asserting that a value is MASKED cannot survive the value becoming unreachable, and
+inverting it is right where re-aiming would be wrong.** `/config/all`'s old test hand-wrote
+`authGroups` into both project files and asserted the response masked them. Masking is correct and
+still there — but with the projection in place nothing can produce that value, so the assertion would
+have pinned the handling of an input nothing can generate. It now asserts ABSENCE plus *the plaintext
+appears nowhere in the payload*, which is mechanism-independent, and PATCHes a real group into global
+in the same test so masking stays pinned where it still has a producer. The old name carried the
+mechanism (`masks authGroups in every layer`), which is what made the staleness visible.
 
 **Negative result on the test side, worth having before you go looking: the 26-bare-string i18n
 baseline did not move.** All new copy went through `t()`, and the two dead keys left behind by
-switching designs mid-task (`settings.authGlobalOnly`, `settings.modelRequiredOverride`) were
-deleted with their design rather than left as orphans — the four-orphan rule (i18n key, icon, URL
-builder, prose) applies to a control you *considered* and dropped, not only to one you delete.
+switching designs mid-task (`settings.authGlobalOnly`, `settings.modelRequiredOverride`) were deleted
+with their design rather than left as orphans — **the four-orphan rule (i18n key, icon, URL builder,
+prose) applies to a control you considered and dropped, not only to one you delete.**
 
 ## The rules are written for the worker's situation, and root's operations look exempt
 
@@ -4124,79 +4179,6 @@ the tool could have said something and did not, and the third was fixed by writi
 alternative down. **Prefer that shape: when a rule is broken by someone who knows it, ask what made
 the act look like a different act.**
 
-## Each config layer has its own TYPE, and that is what deleted the validation question
-
-**DECIDED 2026-07-29 (user), and it is the half that closes the door with no write moment:
-*"三层各有自己的类型…如果你设置的 config 你的 field 里没有,自然而然就不对了。以后不需要再纠结
-validation 了。"*** `RepoConfig` and `LocalConfig` are now computed from ONE classification table in
-`src/config.ts`, and each loader projects its file onto that layer's field set. **A field outside a
-layer's set does not exist after the read, so nothing downstream has to reject it** — and every
-argument that used to surround this (which fields the guard should hold, whether
-`GLOBAL_ONLY_FIELDS` is its home, whether `null` / `""` / absent is legal) loses its subject,
-because all of it came from ONE type serving three layers with different semantics.
-
-**The instinct it replaces is a blacklist plus a filter, and that is the same defect
-relocated** — one more field list to maintain, one more N-of-M-doors argument. The test for
-whether you built the right thing: the types must be COMPUTED from the classification so the two
-cannot disagree, and `satisfies Record<keyof MatrixConfig, …>` must make an unclassified new field
-a compile error. That one declaration also feeds both write doors' refusal WORDING and the
-read-path log, so a user meets the same sentence whichever way they arrived.
-
-**A repo write now NORMALIZES a git-tracked file.** The loader strips and the saver writes what
-it was handed, so the next `PATCH …/config/repo` or `mxd config set --project` silently removes a
-stale `model` from `.mxd/config.json`. Intended for a KNOWN field — the key was already doing
-nothing — but it is a diff nobody asked for, in someone's tracked file.
-
-**A key NO layer declares is dropped the same way, and carrying it was considered and REJECTED
-(user, 2026-07-29).** The hazard is real and was traced: `.mxd/config.json` is git-tracked, the
-saver writes back what the loader handed it, so an older matrix editing one field deletes a field a
-NEWER matrix wrote, as an ordinary commit. **The user's answer is that this is a missing-versioning
-problem, not a loader problem**: *"现在我们并没有 proper 的 versioning…以后有 versioning 之后,自然而
-然的 如果你读到新版本 应该说让你去更新"* — reading a newer config should say *upgrade your matrix*
-rather than absorb it silently. Filed as `01KYR23QK9E4CJDD7XKV8Q1CE5`, deliberately not built here.
-
-**The reusable half, and it is root's rather than mine: a consequence traced correctly does not
-make the fix derived from it correctly priced.** The trace above was right. The remedy proposed from
-it — "keep the unknown key, one branch" — was not one branch: `asLayerConfig` returns
-`LayerConfig<L>`, so passing unknown keys through either makes that return type a lie for everything
-downstream or needs them held aside on read and re-merged at save, i.e. a preservation channel
-through read→edit→write in three functions, for a case that has never occurred. **The correctness of
-the diagnosis lends nothing to the price of the cure, and a cost stated as one branch by the person
-who wants the cure is the one to re-derive.**
-
-**Look a classification table up through a `Map`, never property access on the object
-literal.** `TABLE["__proto__"]` answers with `Object.prototype`, which is TRUTHY, so every
-prototype-chain name (`__proto__`, `constructor`, `toString`) resolves to a bogus entry and is
-classified by whichever branch its undefined flags happen to fall into. It is not only a wrong
-sentence: `JSON.parse` yields `__proto__` as an OWN key, so a key that passes the check is then
-ASSIGNED to the result object, where `__proto__` is a setter rather than a property. **Found by a
-test asserting the refusal's WORDING** — every prototype name was already being refused, for a
-reason that was not the true one, which is the shape *is the rule being ENFORCED the same rule
-that is DOCUMENTED* warns about.
-
-**NEGATIVE RESULT — stripping `authGroups` from the LOCAL layer is not a new policy, so do not go
-looking for the decision.** `Partial<Omit<MatrixConfig, GLOBAL_ONLY_FIELDS>>` has excluded it from
-BOTH project layers since it was written; only the runtime disagreed, because `resolveConfig`
-spreads the keys an object REALLY has and the loaders were bare `readJsonConfig` calls. This makes
-the runtime agree with a type that was already declared, which is why the change needed no new
-rule.
-
-**A test asserting that a value is MASKED cannot survive the value becoming unreachable, and
-inverting it is right where re-aiming would be wrong.** `/config/all`'s old test hand-wrote
-`authGroups` into both project files and asserted the response masked them. Masking is correct and
-still there — but with the projection in place nothing can produce that value, so the assertion
-would have pinned the handling of an input nothing can generate. It now asserts ABSENCE plus *the
-plaintext appears nowhere in the payload*, which is mechanism-independent, and PATCHes a real
-group into global in the same test so masking stays pinned where it still has a producer. The old
-name carried the mechanism (`masks authGroups in every layer`), which is what made the staleness
-visible.
-
-**Two things the user ruled OUT, recorded so nobody proposes them a third time.** `mcpServers`
-shallow-merging in from the repo layer **stays exactly as it is** —
-*"mcp 你就别添油加醋了 这个保持现状"*; root raised the `command`/`args`-get-spawned concern and was
-overruled. And `budgetUsd` / `thinkingEffort` are cost levers that would belong to the same trust
-principle if it were ever systematised; they were deliberately not circled, so they are candidates,
-not licence.
 
 ## `git stash pop` does not restore the INDEX, so a commit can be a subset of what you staged
 
@@ -4414,7 +4396,8 @@ every consumer. **The hook never exits non-zero**: a failing `prepare-commit-msg
 so a bug in there takes away the one thing an agent needs in order to fix it — the self-bootstrap
 death chain — and it warns on stderr instead. **Root's own commits carry no trailer**, because root
 works in the main worktree, which never runs the setup hook; accepted, root's id is a constant. The
-same boundary applies in time: the trailer starts on worktrees created AFTER this landed.
+same boundary applies in time: a worktree created before this landed has neither the config key nor
+the hooks path, so its commits carry no trailer and that is not a defect.
 
 ### `git interpret-trailers` has its own opinion about where a message ENDS
 
