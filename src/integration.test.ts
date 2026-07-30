@@ -3931,7 +3931,9 @@ describe("Integration: parent-child lifecycle", () => {
 
 		// Child node marked failed → UI shows red.
 		// Mutation test: removing `tracker.updateStatus(nodeId, "failed")` makes
-		// this assertion fail (status stays "pending").
+		// this assertion fail (the status stays "in_progress" — onLaunch announces
+		// the launch before beforeChildLaunch can throw, so this handler is also
+		// what keeps a failed launch from LOOKING like a running one).
 		const childNode = tracker.getTask(childId);
 		expect(childNode?.status).toBe("failed");
 

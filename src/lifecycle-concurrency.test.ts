@@ -13,6 +13,9 @@
  *     task_complete(failed) to the parent — across multiple launch entry points.
  *   - B-M3: a stop during the outer-retry backoff sleep must return promptly
  *     (abort-aware sleep), not block for the full backoff.
+ *   - launch window: a node must read `in_progress` from the moment a launch is
+ *     DECIDED, not from the moment its workspace is ready — otherwise close_task's
+ *     only guard is blind for the seconds `git worktree add` takes.
  *
  * B-L9 (done-resume + compact → single user turn) lives in drift-lifecycle.test.ts
  * where the compact/restart harness already exists.
@@ -33,6 +36,7 @@ import { createTaskMessage } from "./queue-message-factory.ts";
 import { deliverMessage, stopTask } from "./runtime/agent-lifecycle.ts";
 import type { ScopeOpts } from "./runtime/context.ts";
 import { getEventStore } from "./runtime/helpers.ts";
+import { closeTaskOp } from "./task-operations.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { initTestProject } from "./test-utils/init-test-project.ts";
 import {
@@ -536,5 +540,199 @@ describe("B-M3: outer-retry backoff is abort-aware", () => {
 		await stopTask(ctx.app.ctx, ctx.projectId, rootId);
 		const elapsed = Date.now() - stopStart;
 		expect(elapsed).toBeLessThan(BACKOFF_MS - 1000);
+	}, 25000);
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// The launch window — a node reads `in_progress` from the moment a launch is
+// DECIDED, not from the moment its workspace is ready
+// ════════════════════════════════════════════════════════════════════════
+
+/**
+ * `close_task` refuses exactly one status, `in_progress`, and that guard is the
+ * only thing standing between a close and a live agent. The status used to be
+ * set at the END of the launch — after `beforeChildLaunch`, which for Matrix is
+ * `git worktree add` and takes SECONDS — so for that whole span the node still
+ * read `pending` / `verify` / `closed` and a close sailed straight through: the
+ * worktree removed, the node marked closed, and the agent then coming up on it.
+ * Nothing throws and nothing crashes; the tree says closed while the process
+ * runs.
+ *
+ * The fix flips the status in the SAME SYNCHRONOUS TICK as the launch lock, so
+ * there is no await between "we decided to launch" and "the node says so": the
+ * window is ZERO rather than smaller, resting on the same single-threaded
+ * discipline the launch lock itself already relies on.
+ *
+ * TWO doors reach that window and both are covered here — `deliverMessage` →
+ * `ensureChildAgentRunning` (via the `onLaunch` hook) and the REST `/continue`
+ * reactivation branch (which flips the status itself). A rule enforced at one
+ * of two doors is enforced nowhere.
+ */
+describe("launch window: the status flip precedes workspace prep", () => {
+	let ctx: Ctx;
+	afterEach(async () => {
+		if (ctx) await teardown(ctx);
+	});
+
+	/**
+	 * A launch parked inside `beforeChildLaunch`: `entered` resolves once the
+	 * hook is running, and the hook stays there until `release()` — i.e. the
+	 * launch window, held open for as long as the test needs it.
+	 */
+	function launchGate() {
+		const r: { entered?: () => void; release?: () => void } = {};
+		const entered = new Promise<void>((res) => {
+			r.entered = res;
+		});
+		const held = new Promise<void>((res) => {
+			r.release = res;
+		});
+		return {
+			entered,
+			held,
+			signalEntered: () => r.entered?.(),
+			release: () => r.release?.(),
+		};
+	}
+
+	function parkingScopeOpts(
+		gate: ReturnType<typeof launchGate>,
+		opts: { fail?: boolean } = {},
+	) {
+		return buildScopeOpts({
+			beforeChildLaunch: async (node, tracker, projectPath) => {
+				gate.signalEntered();
+				await gate.held;
+				if (opts.fail) throw new Error("simulated worktree failure");
+				const wt = join(projectPath, ".wt", node.id);
+				tracker.assignWorktree(node.id, `branch-${node.id}`, wt);
+				node.cwd = wt;
+				return { cwd: wt };
+			},
+		});
+	}
+
+	/** close_task's callbacks, recording every worktree removal it asks for. */
+	function closeCallbacks(removed: string[]) {
+		return {
+			broadcastTree: () => {},
+			removeWorktree: async (taskId: string) => {
+				removed.push(taskId);
+			},
+			clearEventStore: () => {},
+		};
+	}
+
+	async function continueReq(ctx: Ctx, nodeId: string): Promise<Response> {
+		return ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${nodeId}/continue`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: yieldInstruction() }),
+			},
+		);
+	}
+
+	test("door 1 (deliverMessage): close during the launch window is refused, and nothing is torn down", async () => {
+		ctx = await setup();
+		const gate = launchGate();
+		ctx.app.ctx.scopeOpts.set(ctx.projectId, parkingScopeOpts(gate));
+
+		const rootId = await getRootId(ctx);
+		const childId = await createChild(ctx, "closable child");
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		// A fresh child is `pending` — a status close_task accepts.
+		expect(tracker.getTask(childId)?.status).toBe("pending");
+
+		// deliverMessage persists the message and fires the launch in the
+		// background; the launch parks inside beforeChildLaunch, exactly where
+		// production spends seconds in `git worktree add`.
+		await deliverMessage(
+			ctx.app.ctx,
+			{ id: ctx.projectId, path: ctx.projectDir },
+			childId,
+			createTaskMessage(rootId, "Root", yieldInstruction()),
+		);
+		await gate.entered;
+
+		// THE WINDOW. Before the fix the node still reads "pending" here.
+		const removed: string[] = [];
+		await expect(
+			closeTaskOp(tracker, childId, closeCallbacks(removed)),
+		).rejects.toThrow("Cannot close a running task");
+
+		// Assert the DAMAGE is absent, not merely that a string was thrown: on
+		// the old code the close SUCCEEDS, and what it leaves behind is a node
+		// marked closed with its worktree pulled out from under a starting agent.
+		expect(tracker.getTask(childId)?.status).toBe("in_progress");
+		expect(removed).toEqual([]);
+
+		gate.release();
+		await waitForIdle(ctx, childId);
+		await stopTask(ctx.app.ctx, ctx.projectId, childId);
+	}, 25000);
+
+	test("door 2 (REST /continue): close during the reactivation window is refused", async () => {
+		ctx = await setup();
+		const gate = launchGate();
+		ctx.app.ctx.scopeOpts.set(ctx.projectId, parkingScopeOpts(gate));
+
+		const childId = await createChild(ctx, "reactivated child");
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		// verify + no worktree — the reactivation branch, and a status
+		// close_task accepts.
+		tracker.updateStatus(childId, "verify");
+		await tracker.save();
+
+		// NOT awaited: the handler is parked inside beforeChildLaunch.
+		const req = continueReq(ctx, childId);
+		await gate.entered;
+
+		const removed: string[] = [];
+		await expect(
+			closeTaskOp(tracker, childId, closeCallbacks(removed)),
+		).rejects.toThrow("Cannot close a running task");
+		expect(tracker.getTask(childId)?.status).toBe("in_progress");
+		expect(removed).toEqual([]);
+
+		gate.release();
+		expect((await req).status).toBe(200);
+		await waitForIdle(ctx, childId);
+		await stopTask(ctx.app.ctx, ctx.projectId, childId);
+	}, 25000);
+
+	test("door 2 failure path: a reactivation that throws restores the status it found, so the node stays closable", async () => {
+		// The early flip makes the FAILURE path load-bearing. Leaving this door's
+		// node at `in_progress` would invent a state the old code never produced:
+		// no agent, and close_task now refuses it — while the caller has just been
+		// handed a 500 and nothing to act on. So this door puts back what it
+		// found. The deliverMessage door deliberately does NOT restore:
+		// reportAutoLaunchFailure marks that node `failed` (pinned by
+		// integration.test.ts), which is both accurate and closable.
+		ctx = await setup();
+		const gate = launchGate();
+		ctx.app.ctx.scopeOpts.set(
+			ctx.projectId,
+			parkingScopeOpts(gate, { fail: true }),
+		);
+
+		const childId = await createChild(ctx, "doomed reactivation");
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		tracker.updateStatus(childId, "verify");
+		await tracker.save();
+
+		const req = continueReq(ctx, childId);
+		await gate.entered;
+		gate.release();
+
+		expect((await req).status).toBe(500);
+		expect(tracker.getTask(childId)?.status).toBe("verify");
+
+		// …and "closable" is the property that matters, so assert it rather than
+		// inferring it from the status.
+		const removed: string[] = [];
+		await closeTaskOp(tracker, childId, closeCallbacks(removed));
+		expect(tracker.getTask(childId)?.status).toBe("closed");
 	}, 25000);
 });
