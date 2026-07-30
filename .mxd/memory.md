@@ -2653,6 +2653,14 @@ at the time*. The measurement usually still holds; the judgement may already be 
 task on the subject is often itself the evidence that intent changed.** An agent that reads "we
 tried this and reverted" as a prohibition abandons a road it is currently supposed to walk.
 
+**And a result round is APPEND-ONLY history, so anything wrong inside one is permanent — which makes
+the copy the only place a mistake can be stopped.** Traced instance: a `done()` result said *"Filed
+as `01KYR23…`"* naming an id that resolves to nothing, this file copied the id out of it, and the
+copy sat here until someone tried to follow it. The round itself stays wrong, correctly; nothing
+should edit history. **So `get_task` a hit before you quote its id, for the same reason the header
+tells you to `get_task` before you trust its excerpt** — an unresolvable id looks exactly like a
+real one until it is dereferenced, and every copy multiplies the places that has to happen.
+
 **An instruction you cannot execute is decoration.** Both fixes here are only worth doing BECAUSE
 the header now says "get_task these": the block prints the **full taskId** (12 chars resolves, an
 ellipsis does not), and dead hits are dropped rather than rendered with a real-looking but
@@ -4196,10 +4204,19 @@ whoever picks this up is re-deciding rather than implementing.
 
 ## Writing this file
 
-What earns a place is the blockquote at the top. **The regeneration procedure, the rot taxonomy, the
-condensing sieves and the acceptance probes all live in `.mxd/memory-reorg.md`** — read them there,
-and put anything you learn about how this file fails there too. Two copies of a procedure drift, for
-exactly the reason *The live path has no construction logic of its own* gives about code.
+What earns a place is the blockquote at the top. **The regeneration procedure, the condensing
+sieves, the acceptance probes and the taxonomy of how THIS FILE accumulates rot between
+regenerations all live in `.mxd/memory-reorg.md`** — read them there, and put anything you learn
+about how this file fails there too. Two copies of a procedure drift, for exactly the reason *The
+live path has no construction logic of its own* gives about code.
+
+**That is a different taxonomy from the prose-rot table in *Changed a behaviour?*, and the two are
+not a duplicate to be merged.** This file's table is about **prose describing CODE** — docstrings,
+tool descriptions, test names — and asks *when does it become wrong*. The reorg document's is about
+**how a curated document decays while nobody is editing it**, and asks *is a correction written down
+anywhere*. They share exactly one member, **Drained**, because a count going stale is the one
+failure both subjects suffer; that overlap is one thing seen from two directions, not two copies of
+one thing.
 
 **Never `write_file` this file for an ordinary update.** Use `edit_file` (match the last lines,
 extend) or `echo >> .mxd/memory.md`. Update it BEFORE calling `done()`, and commit it alongside the
