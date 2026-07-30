@@ -4001,67 +4001,6 @@ gap doing exactly what it says — a single lowercase word with no space is stru
 to the gate — so **the baseline is not holed by this commit**; two real bare strings simply left
 the repo without ever having been counted.
 
-## The code→task link is a trailer on every commit, wired by three files no compiler joins
-
-**WHY, in the user's words: *"所有的 commit 都有信息"* — every commit carries its own
-provenance.** The old link was structurally MISALIGNED, not merely thin: the id rode on git's
-default `Merge branch 'mxd/<taskId>/…'`, and **`git blame` never lands on a merge**, because a
-clean merge carries no changes. So even a surviving id named a commit nobody was holding.
-Measured here: 3755 commits, 1285 merges, **2470 non-merges, which are the ones blame hands
-you**; of the merges only 102 still named a task, because `git merge -m "<a good sentence>"`
-overwrites exactly that line. Two stacked problems, and the 8% is the smaller one. **A trailer
-on every commit made inside the worktree dissolves both**: no merge message has to be written
-any particular way, and the commit blame gives you carries both its own id and its own message
-— the closest explanation of that line that exists.
-
-**The migration constraint stated where this was first decided is unchanged and is the half to
-keep reading**: the 1280 historical commits will never have a trailer, so nothing may present a
-missing trailer as "no provenance".
-
-| file | its part of the mechanism |
-|---|---|
-| `src/worktree-manager.ts` | `git config --worktree mxd.taskId <id>` at creation |
-| `.mxd/hooks/setup_worktree.sh` | points `core.hooksPath` at `.hooks/worktree` |
-| `.hooks/worktree/prepare-commit-msg` | reads that config, appends the trailer |
-
-**`.hooks/worktree` holds `prepare-commit-msg` and nothing else, and aiming it at `.hooks`
-instead is the tempting near-miss**: that directory holds `pre-commit` (typecheck + a test
-subset), which worktrees skip deliberately because agents commit constantly. Recording
-provenance and gating a commit are separate decisions — whether the gate comes back is
-`01KNJ7PT19V1HE1ZRT5KW8X043`'s question, not this one's.
-
-**CORRECTION to *What is actually gated*: its sub-task-worktree row now reads wrong.**
-`core.hooksPath` in a worktree is `<wt>/.hooks/worktree`, not `/dev/null` — and the gating
-answer is still **no**, because that directory contains no gate. Someone who checks the config
-and stops there concludes the opposite.
-
-**Two ways the next person falls, both measured rather than reasoned:**
-
-- **`MERGE_MSG` arrives with NO trailing newline; `COMMIT_EDITMSG` does.** Hand the former
-  to `git interpret-trailers --in-place` and the trailer is joined to the subject by a single
-  newline, after which **git's own parser no longer sees a trailer**:
-  `%(trailers:key=Task-Id,valueonly)` comes back empty while the text sits plainly in `%B`.
-  Every merge made inside a worktree lands there. Append a newline first. **This is why an
-  assertion about a trailer must go through `%(trailers:…)` and never through a substring of
-  the message.**
-- **An empty message plus a hook that adds content is a commit whose SUBJECT is
-  `Task-Id: …`.** git aborts such a commit only because it is empty, and the hook rescues it
-  into existence. Guard on "nothing but blanks and comments" and do nothing.
-
-**The hook never exits non-zero.** A failing `prepare-commit-msg` aborts the commit, so a bug
-in there takes away the one thing an agent needs in order to fix it — the self-bootstrap death
-chain. It warns on stderr instead.
-
-**Two decisions that look like details.** The id comes from git config, **never** from parsing
-the worktree path: the path shape has changed before, and config is where a worktree's identity
-durably lives. And `--if-exists doNothing` makes an inherited `Task-Id` (`git commit -c`,
-cherry-pick) win over ours, because one commit carrying two ids makes `%(trailers:key=Task-Id)`
-answer ambiguously for every consumer.
-
-**Root's own commits carry no trailer** — root works in the main worktree, which never runs the
-setup hook. Accepted; root's id is a constant. The same boundary applies in time: the trailer
-starts on worktrees created AFTER this lands, and every worktree alive today keeps `/dev/null`
-and no `mxd.taskId`.
 
 ## Reading a field with `?? ""` destroys a state the storage layer represents
 
@@ -4277,147 +4216,134 @@ after any commit whose message makes a claim about scope, run `git show --stat` 
 count.** Same family as *`git checkout -- <file>` reverts to the last COMMIT* — a git command that
 quietly relocates work you had already arranged, where the tell is a number you did not look at.
 
+
+
+
 ## The context window is asked for, and it belongs to the ENDPOINT rather than the model
 
-**DECIDED 2026-07-29 (user): *"先问端点,不要 config 覆盖,我们本地不要 config 覆盖,也不要兜底,把 本地的检测删了。"*** The same rule
-as `DEFAULT_MODEL`, one field over: **a number nobody chose, silently deciding when we compact.**
-Deleted with nothing put back — the substring guess in the Anthropic provider, the `CONTEXT_WINDOWS`
-table and `DEFAULT_CONTEXT_WINDOW` in the OpenAI one. `src/context-window.ts` asks the endpoint's
-`/models` and THROWS when it will not answer.
+Same rule as the model and the credential, one field over: **a number nobody chose, silently
+deciding when we compact.** The user's instruction was to delete it with nothing put back — "先问端
+点,不要 config 覆盖,我们本地不要 config 覆盖,也不要兜底,把 本地的检测删了。" So the substring guess
+in the Anthropic provider, the `CONTEXT_WINDOWS` table and `DEFAULT_CONTEXT_WINDOW` are gone, and
+`src/context-window.ts` asks the endpoint's `/models` and THROWS when it will not answer.
 
-**Both directions were live and both were silent, which is the whole reason nothing was red.**
-`claude-sonnet-5` measures 1,000,000 and we guessed 200,000 — the guess matched the literal
-`sonnet-4`, so a new generation simply fell through. `claude-opus-4-1-20250805` measures 200,000 and
-we guessed 1,000,000, because bare `opus` matched everything. **The over-estimate is the
-dangerous half**: compacting at ~900K against an API that refuses at 200K walks into the compaction
-deadlock recorded above. 200000 and 1000000 are both entirely normal numbers to see.
+**Both directions were live and both were silent, which is why nothing was ever red.**
+`claude-sonnet-5` measures 1,000,000 and we guessed 200,000, because the guess matched the literal
+`sonnet-4` and a new generation simply fell through; `claude-opus-4-1-20250805` measures 200,000 and
+we guessed 1,000,000, because bare `opus` matched everything. **The over-estimate is the dangerous
+half**: compacting at ~900K against an API that refuses at 200K walks straight into the compaction
+deadlock. 200000 and 1000000 are both entirely normal numbers to see.
 
 **Read BOTH keys — `max_input_tokens ?? context_length` — because the key follows the PROTOCOL
 DIALECT, not the configured provider.** kimi's auth group is `provider: "anthropic"` with a
-`baseUrl`, and its models response looks Anthropic all over (`type`, `display_name`, `created_at`,
-an envelope with `first_id`/`has_more`) while putting the number under OpenAI's name. Pick the key
-from the provider type and you get a confident 200000 with 1M sitting in the next field.
+`baseUrl`, and its models response looks Anthropic all over (`type`, `display_name`, `created_at`, an
+envelope with `first_id`/`has_more`) while putting the number under OpenAI's name. Pick the key from
+the provider type and you get a confident 200000 with 1M sitting in the next field.
 
 **And read nothing else, however limit-shaped it looks.** Anthropic's `max_tokens` sits directly
 beside `max_input_tokens` and is the OUTPUT cap — 128,000 next to a 1,000,000 window — which is the
 LiteLLM #14876 confusion. OpenClaw #88596 read xAI's `long_context_threshold`, a PRICING breakpoint,
-and reported a 1M model as 200K.
+and reported a 1M model as 200K. A third member of that family lives inside a dialect we now read:
+codex's `max_context_window`. MEASURED — `gpt-5.4` reports `context_window: 272000` and
+`max_context_window: 1000000` in the same entry, **3.68× apart**; `context_window` is what this
+deployment grants and `max_context_window` is the model's ceiling somewhere else. **Five of the seven
+live models have the two keys EQUAL, so a fixture drawn from those five cannot tell them apart** —
+only `gpt-5.4` can, which is why the test uses it.
 
 **Cache on `baseUrl + model`, never on the model alone.** `k3` is 1M and `k3-256k` is 256K at ONE
 host; GPT-5.5 is 1,050,000 on OpenAI's own API and 272,000 of input through the codex endpoint. A
 model does not even have one NAME across deployments — Haiku 4.5 is `claude-haiku-4-5-20251001` on
-the Claude API, `anthropic.claude-haiku-4-5-20251001-v1:0` on Bedrock and
-`claude-haiku-4-5@20251001` on Vertex. The endpoint is the thing that knows.
+the Claude API, `anthropic.claude-haiku-4-5-20251001-v1:0` on Bedrock and `claude-haiku-4-5@20251001`
+on Vertex. **The endpoint is the thing that knows.**
 
-**Matching is EXACT on the model id, and the reason is not "prefixes are sloppy".** `/v1/models`
-is keyed by model **ID**; an **alias** is a separate documented name that the server resolves to
-whatever snapshot it currently points at, and it is designed to MOVE. So there is no correct
-client-side alias→ID mapping — a prefix match gets today's answer right by naming convention, and
-the day an alias is repointed it silently follows list order instead of the official mapping. The
-non-alias cases fall out of the same rule: `claude-opus-4` is a prefix of both a 1M id and a 200K
-one. **MEASURED COST, accepted**: `claude-haiku-4-5` is NOT among the 11 ids the endpoint lists
-and the messages API accepts it anyway (200), so exact matching really does break a config that
-works today. That is why a miss **suggests** the single prefix candidate and resolves nothing —
-suggest, never resolve, because an id the user writes into config is chosen and auditable while one
-we resolved for them is guessed and invisible. All four of Anthropic's dated models have exactly one
-candidate, so the suggestion covers every alias in play. **Do not "fix" aliases by reading
-`response.model` off a probe call**: it expands them, and this file already records it measured as NOT
-ground truth.
+**Matching is EXACT on the model id, and the reason is not that prefixes are sloppy.** `/v1/models`
+is keyed by model ID; an ALIAS is a separate documented name the server resolves to whatever snapshot
+it currently points at, and it is designed to MOVE — so there is no correct client-side alias→ID
+mapping. A prefix match gets today's answer right by naming convention and silently follows list
+order the day an alias is repointed. The non-alias cases fall out of the same rule: `claude-opus-4`
+is a prefix of both a 1M id and a 200K one. **MEASURED COST, accepted**: `claude-haiku-4-5` is NOT
+among the 11 ids the endpoint lists and the messages API accepts it anyway (200), so exact matching
+really does break a config that works today. That is why a miss **suggests** the single prefix
+candidate and resolves nothing — suggest, never resolve, because an id the user writes into config is
+chosen and auditable while one we resolved for them is guessed and invisible. All four of Anthropic's
+dated models have exactly one candidate, so the suggestion covers every alias in play. **Do not "fix"
+aliases by reading `response.model` off a probe call**: it expands them, and this file already
+records that field as measured NOT to be ground truth.
 
-**NEGATIVE RESULTS, so nobody re-derives them.** OpenRouter is public, carries `context_length` on
-all 367 models and has zero bare-name collisions — and is still wrong as a fallback table: it
-covered **3 of the 15 models we measured, with every kimi model missing**, and it reports the window
-*as accessed through OpenRouter*, a middleman's routing parameter standing in for upstream
-capability. A vendored registry (LiteLLM's `model_prices_and_context_window.json`, models.dev) is
-the same hardcoding at larger scale, expiring just as silently. **`api.openai.com/v1/models` does
-not return a context length at all**, and the codex catalog routes answer 401 rather than 404 — so
-the OpenAI path now fails at startup. That costs nothing today, because it is not the provider we
-bootstrap on, and it is honest: an endpoint that will not state its own limit is one we cannot
-safely pick a compaction point for.
+### An empty 200 is a REFUSAL wearing the shape of an answer
 
-**The Anthropic SDK client reaches BOTH endpoints**, because kimi is an anthropic-provider group
-with a `baseUrl` — so `client.models.list()` needs no hand-built copy of the auth headers. The
-standing warning above is that beta headers, timeout and baseUrl are already hand-matched at three
-sites with nothing enforcing agreement; this did not make it four.
-
-### CORRECTION to the paragraph above: the codex path was TWO failures stacked behind one 401
-
-**That sentence — *"the codex catalog routes answer 401 … so the OpenAI path now fails at startup"*
-— implied that fixing the credentials would make the path answer. MEASURED 2026-07-30 against a live
-token: it does not** (`01KYRD862V1JCXNHJ3YZDR3KCH`)**.** The endpoint returns 200 now, and
-`fetchOpenAIModels` could not read a single
-field of it: `client_version` is a REQUIRED query parameter (omit it → 400 `Field required`), the
-envelope is `{models:[…]}` not `{data:[…]}`, entries are keyed `slug` with no `id`, and the window
-is under `context_window`. Four independent mismatches, any one of which was enough.
-
-**The transferable part is the shape, not the fields: a 401 masks every later disagreement, and
-the ones behind it are only separable once it is gone.** Nothing was wrong with the earlier
-measurement — the 401 was real and the conclusion drawn from it was the honest one available. It was
-still half wrong, because *"authentication failed"* and *"we cannot read this dialect"* are one
-observation until the first is fixed. **So a conclusion of the form "X is blocked on Y" is a
-prediction about what happens after Y, and it should be labelled as one rather than as a finding.**
-
-**Third dialect, read through the SAME path — no `isCodexEndpoint` branch.** `ID_KEYS = [id, slug]`
-alongside `WINDOW_KEYS = [max_input_tokens, context_length, context_window]`, and the envelope
-reader takes `data ?? models`. That is the existing rule (*the key follows the protocol dialect, not
-the configured provider*) extended, not forked.
-
-**THIRD measured member of the limit-shaped-but-wrong family, and this one is inside a dialect we
-now read: codex's `max_context_window`.** MEASURED — `gpt-5.4` reports `context_window: 272000` and
-`max_context_window: 1000000` in the same entry, **3.68× apart**, likewise `codex-auto-review`;
-`context_window` is what this deployment grants, `max_context_window` is the model's ceiling
-somewhere else. **Five of the seven live models have the two keys EQUAL, so a fixture drawn from
-those five cannot tell them apart** — only `gpt-5.4` can, which is why the test uses it. Reading the
-wrong key over-estimates, the direction that walks into the compaction deadlock. (The 272,000 also
-independently re-confirms the codex input cap already recorded above, from a second source.)
-
-## An empty 200 is a REFUSAL wearing the shape of an answer
-
-**DECIDED 2026-07-30.** *The endpoint is the only source; if it will not answer, throw* quietly
-assumes an endpoint either answers or fails. **A 200 carrying an empty list is neither.** MEASURED
-on the codex catalog: `client_version=0.144.0` → 7 models, `0.143.0` → **4**, `0.50.0` → **200 with
+*The endpoint is the only source; if it will not answer, throw* quietly assumes an endpoint either
+answers or fails. **A 200 carrying an empty list is neither.** MEASURED on the codex catalog:
+`client_version=0.144.0` returns 7 models, `0.143.0` returns **4**, `0.50.0` returns **200 with
 zero**. The list is silently filtered by a parameter WE send.
 
-**So an empty list gets its own error, ahead of the not-found case.** Classifying it as "the
-endpoint does not list your model" is wrong twice over: it blames a config field, and editing that
-field cannot help — *never offer a remedy that will not work*, in the one medium where the reader
-then goes and does it. The refusal error instead says the endpoint enumerated nothing and names the
-request that produced it (`requestDetail`, supplied by the provider because only the provider knows
-what it sent).
+**So an empty list gets its own error, ahead of the not-found case.** Classifying it as "the endpoint
+does not list your model" is wrong twice over: it blames a config field, and editing that field
+cannot help — *never offer a remedy that will not work*, in the one medium where the reader then goes
+and does it. The refusal instead says the endpoint enumerated nothing and names the request that
+produced it (`requestDetail`, supplied by the provider because only the provider knows what it sent).
 
-**`client_version` is sent at the MAXIMUM (`999.0.0`), meaning "apply no version filter", and that
-is not the species of constant this module deleted.** `DEFAULT_MODEL` and `DEFAULT_CONTEXT_WINDOW`
-stood IN FOR AN ANSWER — a number nobody chose flowing into a decision. This flows into no answer:
-the window still comes entirely from the response. **The discriminator worth keeping is "does this
-value substitute for a fact, or modify a request".** Why the alternatives lose:
-
-- **A real pinned version** (`0.146.0`) IS the deleted defect: chosen once, and the day the server
-  raises its floor it degrades to an empty list — which is exactly why the empty-list case had to
-  stop reading as "your model is not listed" before this was safe to ship.
-- **Reading the local `codex --version`** claims to be a codex build we are not (we send
-  `originator: "matrix"` and implement none of the feature matrix those `minimal_client_version`
-  gates describe), and makes our answer depend on whether that CLI happens to be installed and how
-  old it is — the same class as reading a model name out of the environment.
-- **`0.0.0`**, which also returns all 7, is the worse of the two lies: `999.0.0` returning
-  everything follows from `>= minimal_client_version`, the visible mechanism, while `0.0.0`
-  returning everything works for a reason we cannot see. **Prefer the sentinel whose behaviour
-  follows from the mechanism you can read.**
-
-Filtering is pure loss here regardless — we never SELECT from this list, the user already picked a
-model — so a narrower catalogue can only fail a lookup for a model we are about to send traffic to.
+**`client_version` is sent at the MAXIMUM (`999.0.0`), meaning "apply no version filter", and that is
+not the species of constant this module deleted.** `DEFAULT_MODEL` and `DEFAULT_CONTEXT_WINDOW` stood
+IN FOR AN ANSWER — a number nobody chose flowing into a decision. This flows into no answer: the
+window still comes entirely from the response. **The discriminator worth keeping is "does this value
+substitute for a fact, or modify a request".** Why each alternative loses: a real pinned version
+(`0.146.0`) IS the deleted defect, chosen once and degrading to an empty list the day the server
+raises its floor — which is exactly why the empty-list case had to stop reading as "your model is not
+listed" before this was safe to ship; reading the local `codex --version` claims to be a codex build
+we are not (we send `originator: "matrix"` and implement none of the feature matrix those
+`minimal_client_version` gates describe) and makes our answer depend on whether that CLI is installed;
+and `0.0.0`, which also returns all 7, is the worse of the two lies, because `999.0.0` returning
+everything follows from `>= minimal_client_version`, the visible mechanism, while `0.0.0` returning
+everything works for a reason we cannot see. **Prefer the sentinel whose behaviour follows from the
+mechanism you can read.** Filtering is pure loss here regardless — we never SELECT from this list, the
+user already picked a model — so a narrower catalogue can only fail a lookup for a model we are about
+to send traffic to.
 
 **Sent unconditionally with no endpoint branch, and that is measured rather than assumed:**
 `api.openai.com/v1/models` answers identically with and without it (the same 401 `invalid_api_key`,
 so it is ignored rather than rejected — an unknown-parameter rejection would be a 400), and kimi
 returns the same 4 models either way.
 
-**Two test doubles matched the models route with `urlStr.endsWith("/models")`, which a required
-query string silently breaks — and the symptom does not name the cause.** In
-`mock-openai-responses-api.ts` the request fell through to the next branch and raised `Unexpected
-URL`, which reads as the provider calling the wrong route. **Match `new URL(u).pathname`, not the
-whole URL.** Same shape as the extensionless-file grep: a matcher that looks exact and is silently
+### One 401 was hiding four more disagreements
+
+An earlier entry said the codex catalog routes answer 401, so the OpenAI path fails at startup — and
+implied that fixing the credentials would make the path answer. **MEASURED 2026-07-30 against a live
+token (`01KYRD862V1JCXNHJ3YZDR3KCH`): it does not.** The endpoint returns 200 now, and
+`fetchOpenAIModels` could not read a single field of it: `client_version` is a REQUIRED query
+parameter (omit it and you get a 400 `Field required`), the envelope is `{models:[…]}` not
+`{data:[…]}`, entries are keyed `slug` with no `id`, and the window is under `context_window`. Four
+independent mismatches, any one of which was enough.
+
+> **The transferable part is the shape rather than the fields: a 401 masks every later disagreement,
+> and the ones behind it are only separable once it is gone.** Nothing was wrong with the earlier
+> measurement — the 401 was real and the conclusion drawn from it was the honest one available. It
+> was still half wrong, because *"authentication failed"* and *"we cannot read this dialect"* are one
+> observation until the first is fixed. **So a conclusion of the form "X is blocked on Y" is a
+> PREDICTION about what happens after Y, and it should be labelled as one rather than as a finding.**
+
+That third dialect is read through the SAME path, with no `isCodexEndpoint` branch: `ID_KEYS = [id,
+slug]` alongside `WINDOW_KEYS = [max_input_tokens, context_length, context_window]`, and the envelope
+reader takes `data ?? models`. That is the existing rule — *the key follows the protocol dialect, not
+the configured provider* — extended rather than forked.
+
+**Two test doubles matched the models route with `urlStr.endsWith("/models")`, which a required query
+string silently breaks, and the symptom does not name the cause.** In `mock-openai-responses-api.ts`
+the request fell through to the next branch and raised `Unexpected URL`, which reads as the provider
+calling the wrong route. **Match `new URL(u).pathname`, not the whole URL** — same shape as the
+extension-scoped grep that missed an extensionless hook: a matcher that looks exact and is silently
 narrower than the thing it matches.
 
+**NEGATIVE RESULTS, so nobody re-derives them.** OpenRouter is public, carries `context_length` on
+all 367 models and has zero bare-name collisions — and is still wrong as a fallback table: it covered
+**3 of the 15 models we measured, with every kimi model missing**, and it reports the window *as
+accessed through OpenRouter*, a middleman's routing parameter standing in for upstream capability. A
+vendored registry (LiteLLM's `model_prices_and_context_window.json`, models.dev) is the same
+hardcoding at larger scale, expiring just as silently. **`api.openai.com/v1/models` does not return a
+context length at all.** The Anthropic SDK client reaches BOTH endpoints, because kimi is an
+anthropic-provider group with a `baseUrl`, so `client.models.list()` needs no hand-built copy of the
+auth headers — and deliberately did not become a fourth site of the hand-matched client construction
+warned about above.
 
 ## The integration suite was running a configuration no install can have
 
@@ -4443,23 +4369,76 @@ deleted default back inside the harness, where nothing could ever go red. **And 
 copies of the SDK client stub lived in one test file**, none of them able to answer `models.list`;
 they are now one `createMockAnthropicClient`. Four copies of a fake is four places to miss one.
 
-## Extends *The code→task link is a trailer*: a third message-end trap, and the one generalisation
 
-**`git interpret-trailers` has its own opinion about where a commit message ENDS, and it does not
-match the reader's.** Three traps in this hook now, and all three are that one fact: whenever the
-trailer is placed somewhere that is not the last paragraph *as `%(trailers:…)` sees it*, the id sits
-in `%B` looking perfect and the parser reports nothing. The next one will look unrelated too — this
-is the sentence that says where to look.
 
-**The third: a line beginning `---` is the format-patch divider, so interpret-trailers stops the
-message there and inserts the trailer ABOVE it — above the divider it is not the last paragraph and
-therefore not a trailer.** The asymmetry is one-sided and is the whole mechanism: only the WRITER
-honours `---`; the reader just takes the last paragraph. Fix is one flag, `--no-divider`. Found the
-way it will always be found — a real task's first commit came out with no id, from a body containing
-`--- the 333 red tests were the deletion working ---`.
+## The code→task link is a trailer on every commit
 
-**MEASURED 2026-07-30, and the result is a NEGATIVE one worth more than the fix — `---` is the whole
-class, not one spelling of it.** Eight markers, real commits, read back through git's parser:
+**WHY, in the user's words: "所有的 commit 都有信息" — every commit carries its own provenance.**
+The old link was structurally MISALIGNED rather than merely thin. The id rode on git's default
+`Merge branch 'mxd/<taskId>/…'`, and **`git blame` never lands on a merge**, because a clean merge
+carries no changes — so even a surviving id named a commit nobody was holding. Measured here: 3755
+commits, 1285 merges, **2470 non-merges, which are the ones blame hands you**; and of the merges only
+102 still named a task, because `git merge -m "<a good sentence>"` overwrites exactly that line.
+**The habit gets worse the more carefully you write.** Two stacked problems, and the 8% is the
+smaller one. A trailer on every commit made inside the worktree dissolves both: no merge message has
+to be written any particular way, and the commit blame gives you carries both its own id and its own
+message — the closest explanation of that line that exists.
+
+**Migration constraint on the CONSUMER side, and it is the half to keep reading:** the 1280
+historical commits will never have a trailer, so **nothing that reads one may present its ABSENCE as
+"no provenance".** Route through the time coordinate, which holds for every commit ever made, and
+treat a trailer as an accelerator where it happens to exist. Build it the other way round and you
+have shipped an empty result read as an answer.
+
+| file | its part of the mechanism |
+|---|---|
+| `src/worktree-manager.ts` | `git config --worktree mxd.taskId <id>` at creation |
+| `.mxd/hooks/setup_worktree.sh` | points `core.hooksPath` at `.hooks/worktree` |
+| `.hooks/worktree/prepare-commit-msg` | reads that config, appends the trailer |
+
+**`.hooks/worktree` holds `prepare-commit-msg` and nothing else, and aiming it at `.hooks` instead is
+the tempting near-miss**: that directory holds `pre-commit` (typecheck plus a test subset), which
+worktrees skip deliberately because agents commit constantly. Recording provenance and gating a
+commit are separate decisions; whether the gate comes back is `01KNJ7PT19V1HE1ZRT5KW8X043`'s
+question, not this one's. **CORRECTION to *What is actually gated*, whose sub-task-worktree row now
+reads wrong:** `core.hooksPath` in a worktree is `<wt>/.hooks/worktree`, not `/dev/null` — and the
+gating answer is still **no**, because that directory contains no gate. Someone who checks the config
+and stops there concludes the opposite.
+
+**Two decisions that look like details.** The id comes from git config, **never** from parsing the
+worktree path: the path shape has changed before, and config is where a worktree's identity durably
+lives. And `--if-exists doNothing` makes an inherited `Task-Id` (`git commit -c`, cherry-pick) win
+over ours, because one commit carrying two ids makes `%(trailers:key=Task-Id)` answer ambiguously for
+every consumer. **The hook never exits non-zero**: a failing `prepare-commit-msg` aborts the commit,
+so a bug in there takes away the one thing an agent needs in order to fix it — the self-bootstrap
+death chain — and it warns on stderr instead. **Root's own commits carry no trailer**, because root
+works in the main worktree, which never runs the setup hook; accepted, root's id is a constant. The
+same boundary applies in time: the trailer starts on worktrees created AFTER this landed.
+
+### `git interpret-trailers` has its own opinion about where a message ENDS
+
+**Three traps in this hook now, and all three are that one fact: whenever the trailer is placed
+somewhere that is not the last paragraph *as `%(trailers:…)` sees it*, the id sits in `%B` looking
+perfect and the parser reports nothing.** The next one will look unrelated too — this is the sentence
+that says where to look.
+
+1. **`MERGE_MSG` arrives with NO trailing newline; `COMMIT_EDITMSG` does.** Hand the former to
+   `--in-place` and the trailer is joined to the subject by a single newline, after which git's own
+   parser no longer sees a trailer. Every merge made inside a worktree lands there. Append a newline
+   first. **This is why an assertion about a trailer must go through `%(trailers:…)` and never
+   through a substring of the message.**
+2. **An empty message plus a hook that adds content is a commit whose SUBJECT is `Task-Id: …`.** Git
+   aborts such a commit only because it is empty, and the hook rescues it into existence. Guard on
+   "nothing but blanks and comments" and do nothing.
+3. **A line beginning `---` is the format-patch divider, so interpret-trailers stops the message
+   there and inserts the trailer ABOVE it** — where it is not the last paragraph and therefore not a
+   trailer. The asymmetry is one-sided and is the whole mechanism: **only the WRITER honours `---`;
+   the reader just takes the last paragraph.** Fix is one flag, `--no-divider`. Found the way it will
+   always be found: a real task's first commit came out with no id, from a body containing
+   `--- the 333 red tests were the deletion working ---`.
+
+**MEASURED, and the result is a NEGATIVE one worth more than the fix — `---` is the whole class, not
+one spelling of it.** Eight markers, real commits, read back through git's parser:
 
 | in the body | readable without the flag? |
 |---|---|
@@ -4470,28 +4449,59 @@ So `--no-divider` disables the single end-of-message heuristic that exists rathe
 spelling — it is not an addition list, and **there is nothing else to go and guard.** Note the
 asymmetry someone will trip over: git wants `---` followed by whitespace or end-of-line, so a LONGER
 markdown rule (`----------`) is safe while the short one is not, and `---` is the common spelling.
-
-**A grep for a FLAG NAME in a file that documents that flag in prose is not a check** — it
-matched the comment and self-reported "the flag is present" in the run where it had just been
-stripped, in two separate instruments in one round. Key a control on the invocation you made, never
-on the text of the file you mutated. Same family as the extension-scoped grep that missed the
-extensionless hook during the `mxd.taskId` rename: **both times the instrument searched the artifact
-instead of the action.**
-
-**Do NOT add a test asserting `----------` still works.** It passes without the flag too, so it
+**Do NOT add a test asserting `----------` still works**: it passes without the flag too, so it
 cannot express the difference — the only discriminating shape is a line of exactly `---` or
 `--- text`.
 
+**A grep for a FLAG NAME in a file that documents that flag in prose is not a check.** It matched the
+comment and self-reported "the flag is present" in the run where the flag had just been stripped, in
+two separate instruments in one round. **Key a control on the invocation you made, never on the text
+of the file you mutated** — same family as the extension-scoped grep that missed an extensionless
+hook during the `mxd.taskId` rename: both times the instrument searched the artifact instead of the
+action.
+
 **The sibling failure, where the instrument WORKED and only its CAPTION lied.** The commit-trailer
 audit counted correctly and printed its bucket as `(pre-migration)` — a *cause* the scan never
-tested, and already false when written, since that bucket also holds every clean `--no-ff` merge
-root makes on main (no hook runs there). Nothing caught it until root's own merge moved the number
-seconds after the file landed. **A counting instrument can be right in its number and lying in
-its label, and the label is the part nobody audits** — the number gets checked because someone
-wanted it, the caption is read as decoration. Let a bucket claim only its own predicate ("no
-`Task-Id:` line in the message") and describe what happens to be in it separately. **Distinct from
-the grep failure above: there the instrument never worked; here it always did.**
+tested, and already false when written, since that bucket also holds every clean `--no-ff` merge root
+makes on main, where no hook runs. Nothing caught it until root's own merge moved the number seconds
+after the file landed. **A counting instrument can be right in its number and lying in its label, and
+the label is the part nobody audits** — the number gets checked because somebody wanted it, the
+caption is read as decoration. Let a bucket claim only its own predicate ("no `Task-Id:` line in the
+message") and describe what happens to be in it separately.
 
+### The hook checks its own work, and WHERE that check can live is the whole finding
+
+**A `pre-commit` audit of trailer damage is structurally blind, and the reason is worth more than the
+check: the commits that CAN be damaged are exactly the ones a `pre-commit` hook never sees.**
+`.hooks/worktree/` holds `prepare-commit-msg` and nothing else, so pre-commit never runs in a
+worktree; a clean `--no-ff` merge runs no hook at all; so a gate there sees only root's own direct
+commits on main — which carry no trailer whatsoever and therefore cannot exhibit the defect. **Three
+files have to be held at once to see that** (the hooks directory, WorktreeManager's config write,
+git's merge behaviour), which is why it was invisible to two people in a row.
+
+**Second reason, independent and worth stating because it generalises past this hook: an audit of
+history cannot be a gate.** The damage it reports is in a commit that already exists, so a blocking
+check refuses your innocent new commit until somebody rewrites history. **A gate you cannot satisfy
+by doing the right thing teaches bypassing, and the habit then costs you the checks it was good at.**
+
+So the check lives in `prepare-commit-msg`, warns on stderr, and never fails — the one moment the
+author can still `--amend`. **The mechanism, and why it is not a second reader implementation:**
+`git interpret-trailers --no-divider --parse <msgfile>` applies git's OWN last-paragraph rule to the
+pending message. Measured to agree with `%(trailers:key=Task-Id,valueonly)` on the resulting commit
+for **11 of 11** shapes — the divider damage, its fix, a trailer glued to the subject, and messages
+trailed by comment or scissors blocks, which is the half that would otherwise warn spuriously on
+every editor commit. **`--no-divider` is load-bearing on the PARSE call too**, not only on the write
+call: without it the check inherits the divider rule the writer just stopped honouring, and then it
+disagrees with the reader in both directions at once.
+
+**The guard has a test for each direction, and that pair is the point.** Deleting the check reddens
+"warns when the trailer would not read back"; making it warn unconditionally reddens "stays silent on
+the same message". Over-strict is the direction nobody tests, and here it is the expensive one: a
+check that cries on every commit is read as wallpaper within a day. **The state is now unreachable
+through a correct writer, so the test breaks the WRITER on purpose** — `installTrailerHook` takes a
+mutation that strips one flag from the shipped script, leaving the code under test verbatim. A check
+for an unknown FOURTH cause cannot be tested any other way, and a fixture-local reimplementation
+would have passed against a broken hook.
 
 ## Nothing ambient may decide what we send, where we send it, or who pays
 
@@ -4740,45 +4750,6 @@ while two password inputs went on collecting them, plus 12 orphan i18n keys acro
 locales. **The 8:5 ratio is the entry: the typed half and the by-name half are the same order of
 magnitude here, and only one of them reddens.** Filed as `01KYRD9GS9HCW8145H5C5ES6MZ`.
 
-## The trailer hook checks its own work, and WHERE that check can live is the whole finding
-
-**A `pre-commit` audit of trailer damage is structurally blind, and the reason is worth more
-than the check: the commits that CAN be damaged are exactly the ones a `pre-commit` hook never
-sees.** `.hooks/worktree/` holds `prepare-commit-msg` and nothing else, so pre-commit never runs
-in a worktree; a clean `--no-ff` merge runs no hook at all; so a gate there sees only root's own
-direct commits on main — which carry no trailer whatsoever and therefore cannot exhibit the
-defect. **Three files have to be held at once to see that** (the hooks directory, WorktreeManager's
-config write, git's merge behaviour), which is why it was invisible to two people in a row.
-
-**Second reason, independent and worth stating because it generalises past this hook: an audit of
-history cannot be a gate.** The damage it reports is in a commit that already exists, so a blocking
-check refuses your innocent new commit until someone rewrites history. **A gate you cannot
-satisfy by doing the right thing teaches bypassing, and the habit then costs you the checks it was
-good at.**
-
-So the check lives in `prepare-commit-msg`, warns on stderr, and never fails — the one moment the
-author can still `--amend`.
-
-**The mechanism, and why it is not a second reader implementation:
-`git interpret-trailers --no-divider --parse <msgfile>` applies git's OWN last-paragraph rule to
-the pending message.** Measured to agree with `%(trailers:key=Task-Id,valueonly)` on the resulting
-commit for **11 of 11** shapes — the divider damage, its fix, a trailer glued to the subject, and
-messages trailed by comment or scissors blocks, which is the half that would otherwise warn
-spuriously on every editor commit.
-
-**`--no-divider` is load-bearing on the PARSE call too, not only on the write call**: without it
-the check inherits the divider rule the writer just stopped honouring, and then it disagrees with
-the reader in both directions at once. A mutation dropping it reddens both halves of the pair.
-
-**That pair is the point — the guard has a test for each direction.** Deleting the check reddens
-"warns when the trailer would not read back"; making it warn unconditionally reddens "stays silent
-on the same message". Over-strict is the direction nobody tests, and here it is the expensive one: a
-check that cries on every commit gets read as wallpaper within a day.
-
-**The state is now unreachable through a correct writer, so the test breaks the WRITER on
-purpose** — `installTrailerHook` takes a mutation that strips one flag from the shipped script,
-leaving the code under test verbatim. A check for an unknown FOURTH cause cannot be tested any other
-way, and a fixture-local reimplementation would have passed against a broken hook.
 
 
 
