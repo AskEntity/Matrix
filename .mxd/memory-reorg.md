@@ -271,9 +271,43 @@ entering at a subsystem meets a class name cold with no pointer back.
 
 **Require three parts in the report, because the last two get skipped**: what changed; what was
 CHECKED AND NOT CHANGED, which is a real result that stops the next pass re-deriving it; and what it
-wanted to change but did not. Then own the report — see `01KYT7EYE951TPFSYRJ3QAH2F5`, because the
-findings a cold read uniquely produces are exactly the ones a later reorganisation does NOT
-regenerate, so an unowned report loses only the irreplaceable half.
+wanted to change but did not.
+
+**Those three parts have three DIFFERENT destinations, and only the first is obvious.** Part one is
+the commit. **Part two goes into a document, dated and scoped** — the same rule as *when a region
+checks out clean, say so IN the file*, and the report is where it gets skipped most reliably,
+because a clean result feels like the absence of a finding rather than a finding. **Part three lands
+as NODES before the cold read calls `done()`, and the report names their ids**
+(`01KYT7EYE951TPFSYRJ3QAH2F5`). A result round cannot hold owed work — `memory.md` § *A request
+inside a `done()` result is owed to nobody* carries the general rule and the measurement behind it.
+This step is the most expensive place to learn that, because part three is exactly the set no probe
+can reach, and because the reader who produced it is about to stop existing.
+
+**What the 2026-07-30 read checked and found clean, on `memory.md` @ `880845ed` (4224 lines)** — an
+instance of part two, which had never once been recorded. Do not re-derive these; do re-run them
+against a later version. 118 italic cross-reference spans, every
+one resolving to a real heading or region. 40 distinct task ids against 727 nodes — one dangling,
+repaired. 73 path-shaped tokens, all resolving but the four the file itself lists as deleted. 326
+backticked identifiers against tracked source: 20 absent, 19 of them correctly so (deletion records,
+vendor names, things deliberately never built). **Vestigial sentences: ZERO** from 12 patterns plus
+every *"not X, not Y"* pair — worth knowing, because that class is live elsewhere in this repo.
+Positional prose: 17 patterns, ~45 hits, **43 legitimate** — so expect this sweep to be mostly false
+alarms and budget for reading them. Format: 0 attention markers, 138 headings before and after,
+fences even, and every over-wide line a table row.
+
+**The two runs bracket the range, and the good one is a coincidence rather than a process.** On
+2026-07-30, 6 of 8 out-of-scope findings were fixed within 90 minutes — every fix committed by the
+curator that had just merged the report, in the window before it closed. On 2026-07-25 the curator
+was already gone: nothing was actioned, and five days later a regeneration re-derived the placement
+and cross-reference findings as a side effect of reorganising while every finding needing its own
+separate act died. **What survives an unowned report is exactly what a later pass regenerates
+anyway**, which is the half you did not need a cold read for.
+
+**Do not defer them to the next regeneration instead.** It is the tempting answer, since that is
+where the material already is, and it fails on latency: a report is a measurement of ONE version,
+the next rewrite rewords every sentence in it, and a cold read's yield is concentrated in defects
+the pass just introduced — which the next pass will not be looking for, being busy introducing its
+own.
 
 ## Judgement calls that keep coming up
 

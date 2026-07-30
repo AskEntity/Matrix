@@ -2357,7 +2357,9 @@ export function buildAllToolDefs() {
 					schema: donePayloadSchema.shape.result.describe(
 						"What this round ACTUALLY accomplished (if passed) or what went wrong (if failed) — one focused narrative paragraph. " +
 							"Required and non-empty. This is BOTH sent to your parent as the completion notice AND captured as durable, " +
-							"structured memory on the task; write it for a future agent searching past work, not only for your parent right now.",
+							"structured memory on the task; write it for a future agent searching past work, not only for your parent right now. " +
+							"It is a record, never a queue: anything you leave here asking someone else to act — root should…, left for…, " +
+							"out of scope but… — is owned by nobody once your parent's attention moves. create_task those first, then name the id here.",
 					),
 					decl: { kind: "explicit" },
 				},
