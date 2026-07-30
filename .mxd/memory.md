@@ -4427,3 +4427,48 @@ dropped. Its table is a **subtract**-list, so a flag added to the parser and for
 refused side where somebody notices. The instance most likely to be hit is a typo — `--baseurl`
 silently vanished, creating a group against Anthropic's own endpoint with someone else's key, and
 every call 401'd as if the key were bad.
+
+## An installed service records a decision; it must not look one up at login
+
+**DECIDED 2026-07-30 (root, from the `LOG_DIR` precedent in the same function): `mxd daemon
+install` BAKES the data dir `resolveDataDir()` resolved into the plist, as an absolute path.** Not
+forwarded from the environment, and that difference is the entry: **a forwarded variable is
+evaluated in launchd's login environment — neither the installing shell's, nor anything the user
+can see — while a baked path is evaluated once, at install, which is what installing a service
+means.** The plist already treated `LOG_DIR` exactly this way (`StandardOutPath` is an absolute
+literal), so baking the data dir is that ONE mechanism reaching the value `LOG_DIR` is derived
+from, rather than a second mechanism beside it. `["PATH", "HOME"]` stays a forwarding list of two
+and did not grow a third entry: those describe the machine, so whatever the shell has is right for
+them.
+
+MEASURED end to end, and the symptom is worth recognising because neither side reports anything:
+with the plist silent, `MXD_DATA_DIR=/data/mxd mxd init . && mxd daemon install` installs a daemon
+on `~/.mxd`, so the CLI's own token is rejected by the service the CLI just installed, and `mxd
+health` answers `Daemon: undefined vundefined (uptime: NaNs)` while **exiting 0**. (That exit 0 on
+a 401 is a second door of `01KYSBCBNWEWYM2GHF0KH8QW0H`, filed there rather than fixed here.)
+
+⭐ **When two candidate implementations agree on the COMMON input, the test that separates them
+uses the UNCOMMON one — and that is the test nobody writes first.** Mutation-measured here:
+forwarding `MXD_DATA_DIR` through the `["PATH","HOME"]` loop instead of baking it kills exactly ONE
+of seven tests, the case where the shell has NO `MXD_DATA_DIR`, because a forwarding implementation
+SKIPS an unset variable and emits no entry while a baking one emits the resolved default. With the
+variable SET the two emit identical bytes, so the fixture anyone writes first — export it, confirm
+it arrives — cannot distinguish the implementations at all. This is *a fixture that cannot express
+the difference* reached from the other end: not a fixture too poor to show a bug, but one drawn
+from the input where both answers coincide. **Ask which input the candidates AGREE on, and test the
+other one.**
+
+⚠️ **Such a test must DELETE the variable rather than assume it is absent**, or whether it can
+go red depends on whose shell ran it. Same discipline the credential sentinels needed the same day
+(*The SDK reads the credential env itself*), arrived at independently — which is the argument for
+it being a rule rather than a knack.
+
+**An installer IS testable without touching the real machine: a stub `launchctl` earlier on PATH
+plus a temp `HOME`.** `Bun.spawn` resolves the binary through the CHILD env's PATH (measured), so
+the CLI subprocess gets the stub, and `PLIST_DIR` is built from `process.env.HOME`, so the plist
+lands in the temp tree instead of `~/Library/LaunchAgents`. ⚠️ The baked value is user-supplied
+and lands inside XML, so every interpolated string in that document is escaped — an unescaped `&`
+in a data dir produces a plist launchd cannot parse, and **that failure arrives at login, not at
+install.** Apple's own parser is the acceptance check for it (`plutil -lint`, `plutil -extract
+EnvironmentVariables.MXD_DATA_DIR raw`), used by hand rather than in the suite, since it exists
+only on darwin.

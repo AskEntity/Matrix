@@ -228,6 +228,11 @@ describe("mxd daemon install: what it prints is what it installed", () => {
 		const r = await runInstall(env);
 		expect(r.exitCode, `stderr: ${r.stderr}`).toBe(0);
 
+		// ⚠️ The LABEL is load-bearing, not formatting fussiness. `Logs:`
+		// already contains the data dir as a substring, so a looser assertion
+		// (stdout contains the path) passes with the `Data:` line deleted —
+		// verified by mutation. What is being tested is that the data dir is
+		// stated as its own fact, not that its characters appear somewhere.
 		expect(r.stdout).toContain(`Data:  ${env.dataDir}`);
 		// Printed and baked cannot drift: asserted against each other rather
 		// than each against a literal.
