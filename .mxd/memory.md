@@ -2085,6 +2085,53 @@ ABSENCE as "no provenance".** Route through the time coordinate, which holds for
 made, and treat a trailer as an accelerator where it happens to exist. Build it the other way round
 and you have shipped an empty-result-read-as-an-answer — the shape counted all day in this region.
 
+### The trigger that is not another reminder
+
+⭐ **This region already records that reminding harder is REFUTED** — three simultaneous reminders
+and the failure still happened, because what was missing was a way to tell the classes of question
+apart. **A 2026-07-30 prompt section could easily be read as the refuted approach and deleted as
+such, so the distinction is written down here: a reminder asks you to remember; this names a state
+you can catch yourself in.** *"Search when you think you have found something new."* Confidence and
+the urge to check move in opposite directions, so it fires precisely where compliance-style
+reminders cannot reach — at maximum certainty. The prompt hangs it on an observable: **the sentence
+you are about to write** (*this is new / nobody has considered / I've found the cause*).
+
+**Evidence, one evening, root, four for four — every "new" finding already existed:** an analysis of
+four converging consumers believed to be root's own, completed and closed 2026-07-25; an umbrella
+task filed for "the identifier problem" as new framing, whose whole design including the option
+about to be re-derived sat in a 2026-03-24 draft; a "60KB per call" figure reported to a sub task as
+fresh, measured 2026-04-12; and a positional-cursor *defect* that was a deliberate 2026-04-05 design
+made when event count was the only primitive. ⚠️ **In all four, searching stopped after ONE round
+and only continued because the user pushed — and each further round found something more important
+than the last.** Hence *"one query is not a search; stop when a round adds nothing, not when a round
+finally returns something."* The scale of the gap, counted over root's whole 110MB session log
+(2026-07-30, re-measured rather than inherited): **`search` (files) 955 calls, `search_tasks` 42** —
+plus `read_file` 775 and `bash` 4314, so the record is consulted about once per twenty times the
+working tree is. ⚠️ **Counting it needs `{"type":"tool_call","tool":"…"}` — the field is `tool`,
+not `name`.** A first pass grepping `"name":"mcp__mxd__search_tasks"` returned **10** — a plausible
+small number that would have "confirmed" the thesis while actually matching that string inside
+tool_result CONTENT, since results quote the text of other calls. **The wrong instrument answered in
+the believable direction, on the very claim it was asked about.**
+
+**Where the file-search reflex went, and the file it is actually in.** *"When you search files, ask
+whether you should search tasks"* is a decision made while CONSTRUCTING a `search` call — the agent
+still holds the intent it called with — so by this region's own rule it belongs in that tool's
+description, not the prompt and emphatically not handler output. ⚠️ **The file-search `search` is
+defined in `src/tools/definitions.ts`, NOT in `orchestrator-tools.ts`**, which holds `search_tasks`
+and `search_logs`; a task description sent an agent to the wrong file. Fixed in the same edit: the
+old wording **"ALWAYS use this for search tasks"** became readable as "use this for `search_tasks`"
+the day that tool shipped — a name collision that only appears once a neighbour is named.
+
+⚠️ **Writing advocacy for a thing is when you overclaim for it, and the overclaim lands as a
+contradiction of a correction that already exists.** Drafting the section above produced *"the tree
+… is never the thing that was wrong."* It is false, and worse it is **precisely inverted**: the
+`create_task` and `work_context` headers exist to say a past measurement usually holds while a past
+*"so we decided not to"* may not, so an agent told the tree is never wrong reads "we tried it and
+reverted" as a prohibition and abandons a road it is currently supposed to walk. **The fix was to
+delete the false sentence and add nothing** — the true version is already in the payload headers,
+and restating it in the prompt would be the same paragraph in two places, free to drift. Silence
+where another surface already speaks is correct; an assertion in the opposite direction is not.
+
 ## Every hit says what it IS before its body is read
 
 *Retrieval that nobody acts on* made the blocks say what to DO with a hit. This one makes each hit
