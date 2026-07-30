@@ -42,9 +42,16 @@ const SHOW_CONTEXT = process.argv.includes("--context");
  * line comment and a JSDoc block are separate branches of the scanner and the
  * phantoms this hunts live overwhelmingly in the block form — a control that
  * only exercises `//` cannot fail for the reason the survey exists.
+ *
+ * The names are BUILT AT RUNTIME on purpose. This file is tracked, so it is part
+ * of the corpus it searches: a control spelled as a literal here lands in the
+ * code text, the phantom check finds it, and both controls report MISSED. That
+ * is the safe direction — it fails loudly — but it makes the self-test useless,
+ * and it only started happening on the commit that added the script.
  */
-const PLANTED_LINE = "zzSurveyPhantomLineControl";
-const PLANTED_BLOCK = "zzSurveyPhantomBlockControl";
+const suffix = Date.now().toString(36);
+const PLANTED_LINE = `zzSurveyPhantomLine${suffix}`;
+const PLANTED_BLOCK = `zzSurveyPhantomBlock${suffix}`;
 const PLANTED_REAL = "runChildCore"; // defined in agent-lifecycle.ts
 
 type Span = { text: string; line: number };
@@ -165,12 +172,33 @@ if (PLANT) {
 	console.log("");
 }
 
+/**
+ * A `biome-ignore` line is a DIRECTIVE, not prose: the name in it is read by a
+ * tool, and a reader chasing a symbol never lands there. Measured, they were 98
+ * of the hits and every one of the eight names they carry appears in NO other
+ * kind of comment — so left inline they are the first thing anyone scanning the
+ * list meets. Partitioned rather than dropped, because a rule name biome stopped
+ * recognising is a suppression that silently stopped suppressing.
+ */
+const isDirective = (text: string) => text.trim().startsWith("biome-ignore");
+const prose = phantoms.filter(([, hits]) =>
+	hits.some((h) => !isDirective(h.text)),
+);
+const directives = phantoms.filter(([, hits]) =>
+	hits.every((h) => isDirective(h.text)),
+);
+
 console.log(
 	`${tsFiles.length} ts files · ${seen.size} distinct candidates in comments · ${phantoms.length} with no occurrence in code\n`,
 );
-for (const [name, hits] of phantoms) {
+const show = ([name, hits]: (typeof phantoms)[number]) => {
 	console.log(`${name}  (${hits.length})`);
 	if (SHOW_CONTEXT)
 		for (const h of hits) console.log(`    ${h.file}:${h.line}: ${h.text}`);
 	else console.log(`    ${hits.map((h) => `${h.file}:${h.line}`).join(" ")}`);
-}
+};
+for (const p of prose) show(p);
+console.log(
+	`\n── ${directives.length} more appear ONLY in biome-ignore directives ──`,
+);
+for (const p of directives) show(p);
