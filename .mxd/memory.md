@@ -4543,3 +4543,10 @@ no filter at all, so internal agents receive `"external"`-declared tools too —
 `get_logs`, declared `"external"`, is callable from inside the agent loop. **So the flag is a claim
 about the external list and NOT a statement of who can call the tool**; do not read it as one, and
 do not copy a neighbouring tool's value without checking what it produces.
+
+⚠️ **CORRECTION to *The external MCP endpoint*, which says "Six tools": it is SEVEN as of
+2026-07-30** — `search_logs` is `availability: "both"`. The count is the rot here, not the list: a
+number written in prose is indistinguishable from a true one on the day it stops being true, and
+nothing anywhere goes red. `src/mcp-endpoint.test.ts` pins the external list with `toContain` per
+name, i.e. an ADDITION list, so it cannot notice a tool that leaves either — it is the weaker half
+of the pin and worth knowing before trusting it.

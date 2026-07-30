@@ -167,6 +167,7 @@ describe("MCP endpoint", () => {
 			expect(names).toContain("get_tree");
 			expect(names).toContain("get_task");
 			expect(names).toContain("get_logs");
+			expect(names).toContain("search_logs");
 
 			// external-only tools
 			expect(names).toContain("send_user_message");
