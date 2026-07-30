@@ -934,9 +934,22 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			"context-management-2025-06-27",
 			"effort-2025-11-24",
 		];
+		// ⚠️ Every credential slot is named in every branch, and the unused one is
+		// `null` rather than left out. The SDK reads env for a slot that is
+		// `undefined` — `if (apiKey === undefined) apiKey = readEnv(…)` — and
+		// `null` is its own documented way to say "do not look in the
+		// environment" (signature: `string | null | undefined`). Omitting the slot
+		// is the same as `undefined`, so there is no shorter spelling of this.
+		//
+		// It is not merely that env would outrank config: authHeaders() emits one
+		// header per filled slot, and the API REJECTS a request carrying both
+		// `x-api-key` and `authorization`. A shell that holds ANTHROPIC_API_KEY
+		// for some other project used to break the OAuth path outright, with an
+		// error that pointed at the OAuth token.
 		if (this.useOAuth) {
 			this.client = new Anthropic({
 				authToken: oauthToken,
+				apiKey: null,
 				timeout,
 				...(baseURL ? { baseURL } : {}),
 				defaultHeaders: {
@@ -946,6 +959,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		} else if (apiKey) {
 			this.client = new Anthropic({
 				apiKey,
+				authToken: null,
 				timeout,
 				...(baseURL ? { baseURL } : {}),
 				defaultHeaders: {
@@ -953,7 +967,12 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				},
 			});
 		} else {
+			// No credential configured. The client holds none, so the SDK throws
+			// "Could not resolve authentication method…" on the first request —
+			// deliberately, instead of quietly running on whatever the shell holds.
 			this.client = new Anthropic({
+				apiKey: null,
+				authToken: null,
 				timeout,
 				...(baseURL ? { baseURL } : {}),
 				defaultHeaders: {

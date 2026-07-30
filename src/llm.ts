@@ -429,10 +429,16 @@ function createAnthropicClient(authGroup: AuthGroup): {
 	// Base URL override → SDK baseURL. Undefined leaves the SDK default
 	// (api.anthropic.com, or ANTHROPIC_BASE_URL env) in place.
 	const baseURL = authGroup.baseUrl;
+	// ⚠️ Every credential slot is named in every branch, unused one set to `null`.
+	// Same reason as the provider constructor, and the same rule applies here for
+	// the same reason it applies there: an `undefined` slot is read from env by
+	// the SDK, and a client carrying both `x-api-key` and `authorization` is
+	// REJECTED by the API. See anthropic-compatible-provider.ts's constructor.
 	if (useOAuth) {
 		return {
 			client: new Anthropic({
 				authToken: oauthToken,
+				apiKey: null,
 				timeout,
 				...(baseURL ? { baseURL } : {}),
 				defaultHeaders: {
@@ -446,6 +452,7 @@ function createAnthropicClient(authGroup: AuthGroup): {
 		return {
 			client: new Anthropic({
 				apiKey,
+				authToken: null,
 				timeout,
 				...(baseURL ? { baseURL } : {}),
 				defaultHeaders: { "anthropic-beta": betaFeatures.join(",") },
@@ -453,10 +460,14 @@ function createAnthropicClient(authGroup: AuthGroup): {
 			useOAuth: false,
 		};
 	}
-	// Fall back to SDK default env resolution. Will 401 at call time if nothing
-	// is set — surfaces clearly to the caller.
+	// No credential in the auth group. The client holds none, so the SDK throws
+	// "Could not resolve authentication method…" at call time — which surfaces to
+	// the plugin as an error naming what is missing, instead of the call quietly
+	// succeeding on a credential the user never configured.
 	return {
 		client: new Anthropic({
+			apiKey: null,
+			authToken: null,
 			timeout,
 			...(baseURL ? { baseURL } : {}),
 			defaultHeaders: { "anthropic-beta": betaFeatures.join(",") },

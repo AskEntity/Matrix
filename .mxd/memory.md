@@ -4301,3 +4301,58 @@ hook does not transfer, and the signal has to be which credential the client end
 And a negative assertion on a header (`not.toContain("oauth-2025-04-20")`) passes just as happily
 on a header you failed to READ, so it needs a positive control beside it asserting a beta feature
 that is always sent; verified by making the accessor path wrong and watching the control fire.
+
+## FIXED: env cannot reach the SDK — `null` in every credential slot, at all three client sites
+
+**The section above discovered the hole; this closed it.** Every place that hand-builds an Anthropic
+client now names EVERY credential slot in EVERY branch, with the unused one set to `null`.
+
+**WHY, in the user's words (2026-07-29): *「所有用 env 决定模型或者 key 的 删掉」*.** The earlier
+commit deleted our own `??` reads and the rule still did not hold, because the SDK is a second
+reader of the same names — so that deletion was half of one job, not a finished one.
+
+⚠️ **It was not "env silently outranks config", it was a HARD FAILURE pointing the wrong way.**
+`authHeaders()` emits one header per filled slot, and the API REJECTS a request carrying both
+`x-api-key` and `authorization`. So anyone whose shell held `ANTHROPIC_API_KEY` for some other
+project **could not use the OAuth path at all**, and the auth error blamed their OAuth token. That
+is the path we bootstrap on every day. **Read "a credential env var is set" as a break, not a
+preference.**
+
+⚠️ **`undefined` and "I didn't pass it" are the SAME THING to the SDK, and `null` is the only other
+spelling.** It reads env for any slot that is `=== undefined`, its own signature is `string | null |
+undefined`, and Anthropic's issue tracker treats `null` as the documented way to opt out
+(`anthropic-sdk-csharp#47`). **NEGATIVE RESULT — there is no disable-env option to look for.** The
+open request for one (`claude-code#12047`) is against the Claude Code SDK, a different product.
+
+⭐ **A dependency's default parameter is a DOOR, and it is the one door nothing here can grep.**
+*A rule enforced at N of M doors is enforced nowhere* has always been about our own call sites; this
+is the same rule where door M lives in `node_modules`, so no amount of auditing `src/` can see it —
+`grep process.env src/` came back clean while env decided the credential on every request. The
+detector that works: for any value we resolve from config, ask **who else reads this name**, and
+read the constructor of whatever we hand it to.
+
+**The three sites, which nothing enforces:** `AnthropicCompatibleProvider`'s constructor,
+`createAnthropicClient` in `llm.ts`, and the `check_model` handler in `runtime.ts`. All three are
+hand-matched copies; the standing warning about them is above and it is now load-bearing for a
+correctness property, not just for beta headers.
+
+**Behaviour change, intended: with no credential configured the client holds none**, so the SDK
+throws *"Could not resolve authentication method…"* before it builds the request, instead of quietly
+running on the shell's key. Same trade as deleting `DEFAULT_MODEL` — an unconfigured value became
+visible instead of substituted. Measured: zero requests leave the process in that state.
+
+⚠️ **The sentinels assert the HEADER SET, because that is the only observable that differs.**
+`client.apiKey` is byte-identical either way (the SDK reads that var too), which the section above
+records. Two observables, one per door, and the pair is deliberate: the provider's tests read
+`client.authHeaders({})`, and `llm.ts`'s go through `createLLM` with `fetch` intercepted and assert
+the credential headers of the actual request — **so the wire test is the positive control for the
+narrower one's observable.** Verified red-then-green, one `null` at a time, at both doors: each
+mutation reddens exactly its own branch's test and no other.
+
+**NEGATIVE RESULT — the OpenAI half is clean where it matters and NOT clean everywhere.** Reported
+rather than fixed (`01KYSD71GAYKD5AAT48C0MFKQN`): `openai`'s constructor takes **all five** slots as
+default parameters, so `undefined` reads env for every one — but our single `new OpenAI(...)` always
+passes `apiKey` (a required `string`) and always passes `baseURL`, so neither the credential nor the
+destination can come from env. What does: `organization` and `project` are never passed, so
+`OPENAI_ORG_ID` / `OPENAI_PROJECT_ID` become `OpenAI-Organization` / `OpenAI-Project` headers on
+every request — env deciding a request attribute nobody configured.
