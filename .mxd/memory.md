@@ -785,7 +785,7 @@ trailing-assistant rule wearing a different error string. A repair that dropped 
 built on the false premise and is deleted.
 
 **`launchingNodes` is a MUTEX over a race condition, and the racing window is the same `git worktree
-add` that *`close_task` can land inside the launch window* races with — the seconds between "we
+add` that `close_task` races with under *Known bugs and open design* — the seconds between "we
 decided to launch" and "the session exists".** It must be taken with no await before
 `beforeChildLaunch`, or it guards nothing: two concurrent launches both used to get through, and the
 loser's throw marked the node `failed` and sent a bogus `task_complete(failed)` while the winner was
