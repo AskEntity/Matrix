@@ -273,9 +273,10 @@ export type Event = (
 ) & {
 	/**
 	 * ULID identifying the agent loop instance (runAgentForNode invocation)
-	 * that emitted this event. Generated once per loop, injected into every
-	 * event via emitWithTask. Used to detect interleaved events from duplicate
-	 * launches of the same task.
+	 * that emitted this event. Generated once per loop, and injected into every
+	 * event by the resource registry's `emit` side effect, which reads it off
+	 * the target task's session. Used to detect interleaved events from
+	 * duplicate launches of the same task.
 	 */
 	traceId?: string;
 

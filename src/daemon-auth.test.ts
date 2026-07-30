@@ -2,8 +2,8 @@
  * Integration tests for daemon's auth middleware, SSE stream tokens,
  * API-key masking, and logout-all revocation.
  *
- * Each test sets up a daemon with `autoInitAuth: true` (production
- * behavior) and an explicit auth.json so we can control tokens.
+ * Auth is always on (no opt-out), so each test sets up a daemon with an
+ * explicit auth.json and mints its own tokens.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";

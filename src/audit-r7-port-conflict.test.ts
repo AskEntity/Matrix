@@ -120,9 +120,9 @@ describe("P2.13 E2E: second daemon on same port with auth enabled", () => {
 			join(dataDirB, "config.json"),
 		);
 
-		// First daemon: normal start. Auth auto-initializes (autoInitAuth
-		// default true in production entry) — the exact scenario P2.13
-		// was broken under.
+		// First daemon: normal start. Every createDaemon runs
+		// ensureAuthInitialized — there is no opt-out — which is the exact
+		// scenario P2.13 was broken under.
 		const procA = Bun.spawn(["bun", DAEMON_PATH], {
 			env: {
 				...process.env,

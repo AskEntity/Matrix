@@ -1614,7 +1614,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			}
 			// Collect side effects but DON'T execute them yet. These are the
 			// React state-update closures that don't need to interleave with
-			// processing (e.g. setBackgroundProcesses, checkAgentStatus).
+			// processing (e.g. setBackgroundProcesses).
 			if (result.sideEffects !== NO_SIDE_EFFECTS) {
 				deferredSideEffects.push(result.sideEffects);
 			}

@@ -6,7 +6,8 @@
  * and renders it using the same components as the real app.
  * No SSE connection — pure static render with all UI elements visible.
  *
- * Mirrors AuthenticatedApp layout: AppHeader, sidebar with TaskTree, tab bar,
+ * Mirrors the layout `AuthenticatedShell` (web/ShellApp.tsx) renders around the
+ * plugin: AppHeader, sidebar with TaskTree, tab bar, activity log, composer.
  */
 
 import { pluginApiPrefix } from "@mxd/types";
@@ -86,7 +87,7 @@ function MockShowcaseInner() {
 	const authFetch = useAuthFetch();
 	const { t } = useLocale();
 
-	// ── State (mirrors AuthenticatedApp) ──
+	// ── State (mirrors AuthenticatedShell) ──
 	const [nodes, setNodes] = useState<TreeNode[]>([]);
 	const [rootNodeId, setRootNodeId] = useState<string | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);

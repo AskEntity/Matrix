@@ -3743,7 +3743,7 @@ describe("Event deterministic verification", () => {
 		expect(agentResult.exitReason).toBe("done_passed");
 		// done exit is reported via exitReason only — the done CONTENT is no longer
 		// carried on AgentResult; it lives in the emitted done() tool_call (JSONL),
-		// which Phase 2 reads back via readDonePayload (single source of truth).
+		// which Phase 2 reads back via readDoneInput (single source of truth).
 
 		const types = emittedEvents.map((e) => e.type);
 		expect(types).toContain("assistant_text");
@@ -3752,7 +3752,7 @@ describe("Event deterministic verification", () => {
 		expect(types).not.toContain("tool_result");
 
 		// Verify tool_call details — incl. the result the provider persisted into
-		// the done() tool_call input (the value Phase 2's readDonePayload consumes).
+		// the done() tool_call input (the value Phase 2's readDoneInput consumes).
 		const toolCall = emittedEvents.find((e) => e.type === "tool_call");
 		if (toolCall?.type === "tool_call") {
 			expect(toolCall.tool).toBe("mcp__mxd__done");

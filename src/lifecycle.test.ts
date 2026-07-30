@@ -1965,7 +1965,7 @@ describe("lifecycle: child completion notification paths", () => {
 		});
 		expect(result1.exitReason).toBe("interrupted");
 
-		// Simulate runChildAgentInBackground's post-completion: send task_complete
+		// Simulate runAgentForNode's Phase 2 post-completion: send task_complete
 		parentQueue.enqueue({
 			source: "task_complete" as const,
 			id: "test-id",
@@ -2029,13 +2029,14 @@ describe("lifecycle: child completion notification paths", () => {
 	});
 
 	test("done() closes queue directly (no task_completed event)", async () => {
-		// Tests the simplified done() flow:
-		// 1. done() handler updates tracker status to passed/failed
-		// 2. done() handler calls closeQueue() directly
-		// 3. waitForQueueMessages() rejects immediately (queue closed)
-		// 4. done() returns → provider emits tool_result → runChildCore sees it and exits
+		// Tests Phase 1 of done(), which is all the loop itself does:
+		// 1. the done() handler closes the queue — it does NOT touch status, that
+		//    is Phase 2 in runAgentForNode, after the session is torn down
+		// 2. the closed queue ends the loop, which returns exitReason "done_passed"
+		// 3. no tool_result is written here — done() is an intended orphan, and the
+		//    resume path writes its result when the task is next woken
 		//
-		// No task_completed event is emitted — closeQueue() replaces it.
+		// No task_completed event is emitted — closing the queue replaces it.
 
 		const trackerPath = join(dataDir, "test-donefix-tracker.json");
 		const tracker = new TaskTracker(trackerPath);
@@ -2050,11 +2051,10 @@ describe("lifecycle: child completion notification paths", () => {
 		const parentQueue = new MessageQueue();
 		attachMockSession(parentNode, parentQueue);
 
-		// Create a provider whose stream simulates done() calling closeQueue():
+		// Create a provider whose stream simulates Phase 1 of done():
 		// 1. Emits text (simulating work)
-		// 2. Updates tracker status (simulating done() handler)
-		// 3. Closes the queue directly (simulating closeQueue() in done() handler)
-		// 4. Blocks on queue.wait() which rejects immediately
+		// 2. Closes the queue directly, the way the done() handler does
+		// 3. Returns exitReason "done_passed" with no tool_result
 		const doneYieldProvider: AgentProvider = {
 			name: "mock-done-yield",
 			execute: async () => ({

@@ -238,7 +238,9 @@ export interface AgentResult {
 	turns: number;
 	/** Session ID for resuming this conversation later. */
 	sessionId: string;
-	// Token breakdown (AnthropicCompatibleProvider only; undefined for ClaudeAgentSdkProvider)
+	// Token breakdown. Both providers fill inputTokens/outputTokens; the two
+	// cache fields are Anthropic-only — the OpenAI Responses usage payload has
+	// no equivalent, so they stay undefined there.
 	/** Non-cached input tokens consumed. */
 	inputTokens?: number;
 	/** Cache-creation (write) tokens consumed. */

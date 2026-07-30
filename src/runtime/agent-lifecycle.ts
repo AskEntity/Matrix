@@ -50,10 +50,10 @@ import {
 	resolveProjectConfig,
 } from "./helpers.ts";
 
-// All provider events flow through the emit() callback → emitEvent().
-// No more AgentEvent→Event conversion layer.
-// The emit() function in createOrchestratorTools handles agent_event
-// wrappers from MCP tools (child agents forwarding events to parent).
+// All provider events flow through the emit() callback → emitEvent(), with no
+// conversion layer in between. Tool handlers reach the same place: the resource
+// registry's `emit` side effect, registered below in runAgentForNode, is what
+// both the provider loop and every MCP tool call go through.
 
 /**
  * How many per-traceId debug-snapshot directories to retain per task.
@@ -272,7 +272,10 @@ export interface RunChildCoreParams {
 /**
  * Shared child agent lifecycle: queue setup → stream events with done() detection → cleanup.
  *
- * Used by `runChildAgentInBackground` for all child agents (both MCP and daemon paths).
+ * Called by `runAgentForNode` for every non-root node; root agents stream the
+ * provider directly, so this wrapper IS the non-root half of that one branch.
+ * Nothing else calls it — a child launched by a message, by a restart resume or
+ * by a reactivation all converge on `runAgentForNode` first.
  *
  * Done detection: done() is an intended orphan — the provider loop detects it
  * and exits immediately (no tool_result emitted). The generator finishes with
@@ -421,11 +424,12 @@ export async function stopAgent(
 	// settling (e.g. bg process killed → completionPromise resolves → provider loop
 	// emits real tool_result). Writing synthetic orphans now races with those writes,
 	// producing duplicate tool_results → API 400 on resume.
-	// Orphan detection runs reliably at restart (autoResumeProjects / launchAgent)
-	// when the provider loop is guaranteed dead.
+	// Orphan detection runs reliably at restart (autoResumeProjects →
+	// runAgentForNode) when the provider loop is guaranteed dead.
 
 	// Emit agent_end synchronously — no await needed.
-	// runAgentForNode's finally checks wasReplaced and skips its own emit.
+	// runAgentForNode's finally emits agent_end only while the node still holds
+	// the session that loop started with, so it will not emit a second one.
 	emitEvent(ctx, projectId, {
 		type: "agent_end",
 		taskId: rootNodeId,
@@ -491,7 +495,8 @@ export async function stopTask(
 	// Orphan detection runs at restart when the provider loop is fully dead.
 
 	// Emit agent_end synchronously — no await needed.
-	// runAgentForNode's finally checks wasReplaced and skips its own emit.
+	// runAgentForNode's finally emits agent_end only while the node still holds
+	// the session that loop started with, so it will not emit a second one.
 	emitEvent(ctx, projectId, {
 		type: "agent_end",
 		taskId: nodeId,
@@ -787,10 +792,16 @@ async function reportAutoLaunchFailure(
 }
 
 /**
- * Ensure a child task has a worktree and a running agent.
- * Creates the worktree if needed, sets status to in_progress, and launches
- * the agent via runChildAgentInBackground. Shared by the REST message
- * endpoint and any other daemon-level code that needs to auto-launch a child.
+ * Ensure a child task has a prepared workspace and a running agent.
+ *
+ * Takes the launch lock, runs the `beforeChildLaunch` and `onLaunch` scope hooks
+ * (Matrix's create the worktree and set the status to in_progress — the hook
+ * decides whether prep is needed, the runtime never inspects workspace state),
+ * then hands the still-held lock to `runAgentForNode`.
+ *
+ * Production callers are `deliverMessage`'s child branch and the Phase 2
+ * relaunch for late messages. The REST message endpoint reaches it through
+ * `deliverMessage`, not directly.
  */
 export async function ensureChildAgentRunning(
 	ctx: RuntimeContext,
@@ -927,8 +938,9 @@ export async function runAgentForNode(
 
 	// Generate a unique trace ID for this agent loop instance.
 	// Stored on TaskSession so external emit paths (stopTask, tool handlers via
-	// resource-registry) can look it up and auto-inject it. The provider loop's
-	// emitWithTask also reads this to tag every event with the run's trace.
+	// resource-registry) can look it up and auto-inject it. The provider loop
+	// emits through that same registry `emit`, so every event it writes is
+	// tagged with the run's trace too.
 	// Enables detection of interleaved events from duplicate launches.
 	const loopTraceId = ulid();
 	try {
@@ -1256,7 +1268,7 @@ export async function runAgentForNode(
 				ts: Date.now(),
 			});
 		}
-		// If wasReplaced: stopAgent/stopTask already emitted agent_end(stopped).
+		// If catchWasReplaced: stopAgent/stopTask already emitted agent_end(stopped).
 		await tracker.save();
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
@@ -1295,9 +1307,9 @@ export async function runAgentForNode(
 	//
 	// Wrapped in try/catch/finally so the loop promise ALWAYS settles. Before this
 	// guard, Phase 2 + the loop-promise resolution sat OUTSIDE any try/finally: if
-	// any step here (save/flush/onDone/deliverMessage) threw, agentLoopPromise was
-	// stranded forever and stopTask — which awaits loopPromise with NO timeout —
-	// hung indefinitely. (cc#3)
+	// any step here (save/flush/onDone/deliverMessage) threw, this node's entry
+	// in ctx.agentLoopPromises was stranded forever and stopTask — which awaits
+	// that promise with NO timeout — hung indefinitely. (cc#3)
 	try {
 		const isDoneExit =
 			agentResult != null &&

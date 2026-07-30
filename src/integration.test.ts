@@ -854,7 +854,8 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		// Agent should NOT have made new API calls yet (no children = skip resume)
 		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests);
 
-		// Send message to wake the agent — this triggers handleInjectMessage → launchAgent(resume)
+		// Send message to wake the agent — handleInjectMessage → deliverMessage →
+		// runAgentForNode(resume)
 		// Post-restart turn: agent should call done()
 		const wakeInstruction = JSON.stringify({
 			blocks: [
@@ -1079,7 +1080,8 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const msgResp = await sendMessage(ctx, wakeInstruction);
 		expect(msgResp.status).toBe(200);
 
-		// Root was already "verify" from first run. launchAgent sets it to "in_progress",
+		// Root was already "verify" from first run. The launch path's onLaunch hook
+		// sets it to "in_progress",
 		// then agent resumes and calls done() again → "verify". We need to wait for
 		// the transition: passed → in_progress → passed. Poll for in_progress first.
 		const tracker = await ctx.app.getTracker(ctx.projectId);
@@ -1766,10 +1768,10 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		ctx.app = await recreateApp(ctx);
 		await ctx.app.autoResumeProjects();
 
-		// Send a message after restart — this triggers handleInjectMessage → launchAgent(resume)
+		// Send a message after restart — handleInjectMessage → deliverMessage →
+		// runAgentForNode(resume)
 		// The message gets written to JSONL (emitEvent) AND queue (deliverMessage).
-		// On launchAgent, findUnconsumedMessages reads it from JSONL, loadPersistedMessages
-		// On launchAgent, findUnconsumedMessages reads it from JSONL. Without dedup, the message appears TWICE.
+		// On relaunch, findUnconsumedMessages reads it from JSONL. Without dedup, the message appears TWICE.
 		const wakeInstruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "UNIQUE_RESTART_MESSAGE" },
@@ -7679,10 +7681,10 @@ describe("Integration: root done then resume", () => {
 		const firstStatus = await waitForDone(ctx);
 		expect(firstStatus).toBe("verify");
 
-		// The agent session is still alive (root agents don't close queue on done(),
-		// they enter idle-yield inside the done() tool handler).
-		// Send a new user message — this should wake done()'s waitForQueueMessages()
-		// and the provider loop should make a second API call without error.
+		// done() tore the session down — a root exits the loop exactly like a child.
+		// Sending a new user message relaunches the node on the done-resume shape:
+		// the wake path writes done()'s tool_result, and the provider loop makes a
+		// second API call without error.
 		const msgResp = await sendMessage(ctx, "Please do more work");
 		expect(msgResp.status).toBe(200);
 
@@ -7750,7 +7752,8 @@ describe("Integration: root done then resume", () => {
 		// Root status was "verify" → autoResume skips (only resumes in_progress)
 		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests);
 
-		// Send a new message with JSON instruction → triggers launchAgent(resume: true)
+		// Send a new message with JSON instruction → relaunch via deliverMessage →
+		// runAgentForNode(resume: true)
 		// Message must contain JSON instruction so mock knows to call done()
 		const wakeInstruction = JSON.stringify({
 			blocks: [
@@ -7821,7 +7824,8 @@ describe("Integration: root done then resume", () => {
 		// Root status was "verify" → autoResume skips
 		expect(ctx.mockAPI.getRequestCount()).toBe(firstRequests);
 
-		// Send a new user message with instruction → triggers launchAgent(resume: true)
+		// Send a new user message with instruction → relaunch via deliverMessage →
+		// runAgentForNode(resume: true)
 		// This reconstructs messages from JSONL + new message → makes API call.
 		// The bug: JSONL has events after done's tool_result (assistant_text, orchestration_completed,
 		// agent_stopped) that may produce empty text content blocks.
@@ -8574,7 +8578,7 @@ describe("Integration: child restart scenarios", () => {
 
 		// autoResumeProjects resumes both:
 		// - Parent: yielding → bypass to queue.wait
-		// - Child: interrupted bash → persists resume message + runChildAgentInBackground
+		// - Child: interrupted bash → persists resume message + runAgentForNode
 		// Child resumes → orphan bash + resume message → API call → done(passed)
 		// Parent wakes from yield → receives task_complete → done(passed)
 		const status = await waitForDone(ctx, 20000);
@@ -8867,7 +8871,7 @@ describe("Integration: child restart scenarios", () => {
 
 		// autoResumeProjects should:
 		// - Parent: yielding → bypass to queue.wait (no API call)
-		// - Child: interrupted → resume message + runChildAgentInBackground
+		// - Child: interrupted → resume message + runAgentForNode
 		// Child resumes → orphan bash result → turn 2 (echo) → turn 3 (done)
 		// done() delivers task_complete to parent
 		// Parent wakes from yield → turn 4 (done)
