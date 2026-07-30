@@ -11,14 +11,10 @@ import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { isDescendantOf } from "./task-utils.ts";
-import { withClientEnv } from "./test-utils/sdk-client-env.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { initTestProject } from "./test-utils/init-test-project.ts";
-import {
-	attachMockSession,
-	initMockResourceRegistry,
-	TEST_CONFIG,
-} from "./test-utils.ts";
+import { withClientEnv } from "./test-utils/sdk-client-env.ts";
+import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
 import { executeTool } from "./tool-execution.ts";
 import type {
 	AgentResult,
@@ -214,68 +210,12 @@ describe("daemon health", () => {
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	// The branch whose breakage was the user-visible one: a configured OAuth
-	// group plus ANTHROPIC_API_KEY in the shell used to send both credentials,
-	// which the API rejects — so this button reported that the OAuth token the
-	// user had just configured was bad.
-	test("check_model on an OAuth group sends only authorization, never the shell's key", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "mxd-health-model-oauth-"));
-		const { app } = createApp({
-			dataDir,
-			agentProvider: mockProvider,
-			initialConfig: {
-				...TEST_CONFIG,
-				authGroups: {
-					probe: {
-						provider: "anthropic",
-						oauthToken: "configured-oauth-token",
-					},
-				},
-				defaultAuth: "probe",
-			},
-		});
-
-		const original = globalThis.fetch;
-		const sent: Record<string, string>[] = [];
-		const hosts: string[] = [];
-		globalThis.fetch = (async (
-			input: RequestInfo | URL,
-			init?: RequestInit,
-		) => {
-			const headers: Record<string, string> = {};
-			const request = new Request(input, init);
-			request.headers.forEach((v, k) => {
-				if (k === "x-api-key" || k === "authorization") headers[k] = v;
-			});
-			sent.push(headers);
-			hosts.push(new URL(request.url).origin);
-			return new Response(
-				JSON.stringify({
-					type: "error",
-					error: { type: "invalid_request_error", message: "probe" },
-				}),
-				{ status: 400, headers: { "content-type": "application/json" } },
-			);
-		}) as typeof globalThis.fetch;
-		try {
-			await withClientEnv(
-				{
-					ANTHROPIC_API_KEY: "sk-ant-shell-key-should-never-be-sent",
-					ANTHROPIC_BASE_URL: "https://env-should-never-decide.example.com",
-				},
-				() => app.request("/health?check_model=true"),
-			);
-		} finally {
-			globalThis.fetch = original;
-		}
-
-		expect(sent).toEqual([{ authorization: "Bearer configured-oauth-token" }]);
-		// And it checked the host we chose, not the one the shell named — a check
-		// against the wrong endpoint answers a question nobody asked.
-		expect(hosts).toEqual(["https://api.anthropic.com"]);
-
-		await rm(dataDir, { recursive: true, force: true });
-	});
+	// The OAuth branch at this door — a configured OAuth group plus a shell
+	// ANTHROPIC_API_KEY, which used to send both credentials and be rejected — is
+	// asserted in `env-cannot-decide.test.ts` against a real listener, from a
+	// config.json in a temp dir. The test below stays because its guarantee is
+	// different: that nothing is sent AT ALL, and that the button says what is
+	// missing.
 
 	test("GET /unknown returns 404", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-404-"));

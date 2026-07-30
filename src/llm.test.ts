@@ -19,7 +19,6 @@ import {
 	runLLM,
 	streamLLM,
 } from "./llm.ts";
-import { withClientEnv } from "./test-utils/sdk-client-env.ts";
 import { ValidatingMockAPI } from "./test-utils/mock-anthropic-api.ts";
 import {
 	createMockedResponsesProviderWithMock,
@@ -340,126 +339,14 @@ describe("LLM facility: Anthropic", () => {
 	});
 });
 
-// ── A shell credential cannot reach the API through the facility ──
+// ── Where the facility's env sentinels live ──
 //
-// The second door. `createAnthropicClient` here is a hand-matched copy of the
-// provider constructor's client construction, so the SDK's env reads reach it
-// exactly the same way — and a guarantee held at one of two doors is held at
-// neither. The provider's own sentinels are in
-// anthropic-compatible-provider.test.ts under "a shell credential cannot reach
-// the API"; the argument for why the header set is the only discriminating
-// observable is written out there.
-//
-// This side asserts at the WIRE rather than on the client, because `createLLM`
-// is the whole door a plugin goes through: what a plugin's one-shot call
-// actually sends. It doubles as the positive control for the other file's
-// narrower observable — it measures that `authHeaders()` is indeed what lands in
-// the request.
-
-describe("a shell credential cannot reach the API (facility)", () => {
-	/**
-	 * Run one `createLLM(...).run()` with a shell full of credentials and fetch
-	 * intercepted. Returns the credential headers of every request that went out,
-	 * plus however the call ended. The stub answers 400 — a status the SDK does
-	 * not retry — so the rejection is the expected outcome, not a symptom.
-	 */
-	async function wireCall(authGroup: AnthropicAuthGroup): Promise<{
-		sent: Record<string, string>[];
-		hosts: string[];
-		error: unknown;
-	}> {
-		const original = globalThis.fetch;
-		const sent: Record<string, string>[] = [];
-		const hosts: string[] = [];
-		globalThis.fetch = (async (
-			input: RequestInfo | URL,
-			init?: RequestInit,
-		) => {
-			const headers: Record<string, string> = {};
-			const request = new Request(input, init);
-			request.headers.forEach((v, k) => {
-				if (k === "x-api-key" || k === "authorization") headers[k] = v;
-			});
-			sent.push(headers);
-			hosts.push(new URL(request.url).origin);
-			return new Response(
-				JSON.stringify({
-					type: "error",
-					error: { type: "invalid_request_error", message: "probe" },
-				}),
-				{ status: 400, headers: { "content-type": "application/json" } },
-			);
-		}) as typeof globalThis.fetch;
-		let error: unknown;
-		try {
-			const llm = withClientEnv(
-				{
-					ANTHROPIC_API_KEY: "sk-ant-shell-key-should-never-be-sent",
-					ANTHROPIC_AUTH_TOKEN: "shell-auth-token-should-never-be-sent",
-					ANTHROPIC_BASE_URL: "https://env-should-never-decide.example.com",
-				},
-				() => createLLM({ authGroup, model: "claude-sonnet-4-6" }),
-			);
-			await llm.run({ user: "hi" });
-		} catch (e) {
-			error = e;
-		} finally {
-			globalThis.fetch = original;
-		}
-		return { sent, hosts, error };
-	}
-
-	test("oauth group: the request carries only authorization", async () => {
-		const { sent } = await wireCall({
-			provider: "anthropic",
-			oauthToken: "configured-oauth-token",
-		});
-		expect(sent).toEqual([{ authorization: "Bearer configured-oauth-token" }]);
-	});
-
-	test("apiKey group: the request carries only x-api-key", async () => {
-		const { sent } = await wireCall({
-			provider: "anthropic",
-			apiKey: "configured-api-key",
-		});
-		expect(sent).toEqual([{ "x-api-key": "configured-api-key" }]);
-	});
-
-	test("the host is ours or the auth group's, never ANTHROPIC_BASE_URL's", async () => {
-		const unset = await wireCall({
-			provider: "anthropic",
-			apiKey: "configured-api-key",
-		});
-		expect(unset.hosts).toEqual(["https://api.anthropic.com"]);
-
-		// Positive control for the same reader: a configured host DOES show up
-		// here, so the assertion above is about where we sent it and not about a
-		// URL nobody read.
-		const configured = await wireCall({
-			provider: "anthropic",
-			apiKey: "configured-api-key",
-			baseUrl: "https://proxy.example.com",
-		});
-		expect(configured.hosts).toEqual(["https://proxy.example.com"]);
-	});
-
-	test("a credential-less group asks the caller for one instead of using the shell's", async () => {
-		// Positive control, in the same test: "no request went out" is also what a
-		// broken interceptor reports, so measure that this one does see a request
-		// when there is one to see.
-		const control = await wireCall({
-			provider: "anthropic",
-			apiKey: "configured-api-key",
-		});
-		expect(control.sent.length).toBe(1);
-
-		const { sent, error } = await wireCall({ provider: "anthropic" });
-		// The SDK refuses to build the request at all, naming what is missing…
-		expect(String(error)).toContain("Could not resolve authentication method");
-		// …so nothing was attempted on the shell's credentials.
-		expect(sent).toEqual([]);
-	});
-});
+// This door's guarantee — a plugin's one-shot call carries the configured
+// credential to the configured host and nothing of the shell's — is asserted in
+// `env-cannot-decide.test.ts`, on a real socket. It used to be asserted here by
+// intercepting `fetch` and reading the headers we would have sent; the receiver
+// version subsumes that, and two mechanisms for one guarantee at one door is the
+// thing this repo keeps deleting.
 
 // ── OpenAI Responses integration ──
 

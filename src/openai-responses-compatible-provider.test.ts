@@ -24,7 +24,6 @@ import {
 	OpenAIResponsesCompatibleProvider,
 	streamResponsesAPI,
 } from "./openai-responses-compatible-provider.ts";
-import { withClientEnv } from "./test-utils/sdk-client-env.ts";
 import { tool } from "./tool-definition.ts";
 
 /**
@@ -1559,60 +1558,12 @@ describe("streamResponsesAPI (SDK-based)", () => {
 		expect((response as { output_text: string }).output_text).toBe("Hello");
 	});
 
-	// The OpenAI SDK takes ALL FIVE of its credential-ish slots as default
-	// parameters reading env, so a slot we leave out is a slot the shell fills.
-	// `organization` / `project` were left out, and they become
-	// `OpenAI-Organization` / `OpenAI-Project` headers — which OpenAI documents as
-	// deciding attribution: "If no header is provided, the default organization
-	// will be billed." Pinned to `null`, the only spelling that suppresses the
-	// read (`""` also suppresses it and emits an empty bearer token — measured,
-	// and not a workaround).
-	//
-	// `apiKey` and `baseURL` are always passed at this site, so env cannot reach
-	// them today. "Today" is the reason this test asserts all four names and not
-	// just the two that leaked: nothing else pins it, and `apiKey`'s type has no
-	// `null`, so if `authToken` ever became optional there would be no way to
-	// stop OPENAI_API_KEY from filling it.
-	test("no shell value decides the credential, the host, or who is billed", async () => {
-		const seen: Record<string, string>[] = [];
-		const hosts: string[] = [];
-		const fetchMock = mock(
-			async (url: string | URL | Request, init?: RequestInit) => {
-				const request = new Request(url, init);
-				const headers: Record<string, string> = {};
-				request.headers.forEach((v, k) => {
-					if (
-						k === "authorization" ||
-						k === "openai-organization" ||
-						k === "openai-project"
-					)
-						headers[k] = v;
-				});
-				seen.push(headers);
-				hosts.push(new URL(request.url).origin);
-				return successSSEResponse();
-			},
-		) as unknown as typeof fetch;
-
-		await withClientEnv(
-			{
-				OPENAI_API_KEY: "sk-shell-key-should-never-be-sent",
-				OPENAI_BASE_URL: "https://env-should-never-decide.example.com",
-				OPENAI_ORG_ID: "org-shell-should-never-be-sent",
-				OPENAI_PROJECT_ID: "proj-shell-should-never-be-sent",
-			},
-			// runStream installs the fetch stub before streamResponsesAPI builds the
-			// client, which is required: the SDK snapshots globalThis.fetch in its
-			// constructor.
-			() => runStream(fetchMock, { authToken: "configured-token" }),
-		);
-
-		// One request, carrying our credential and nothing of the shell's. The
-		// positive `authorization` entry is the control: an empty object is also
-		// what a reader that read nothing returns.
-		expect(seen).toEqual([{ authorization: "Bearer configured-token" }]);
-		expect(hosts).toEqual(["https://api.openai.com"]);
-	});
+	// The env guarantee at this door — no OPENAI_ORG_ID / OPENAI_PROJECT_ID /
+	// OPENAI_API_KEY / OPENAI_BASE_URL on the wire, whatever the shell holds — is
+	// asserted in `env-cannot-decide.test.ts` against a real listener. It was
+	// asserted here first, on an intercepted fetch; the receiver version subsumes
+	// it, and the org/project leak happens at header construction, which only a
+	// receiver can see either way.
 
 	test("SDK retries on 429 then succeeds", async () => {
 		let callCount = 0;
