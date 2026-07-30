@@ -50,8 +50,8 @@ discover you cannot see *which* two, re-run with `| grep fail`, and get a **diff
 — because these tests flake at the scheduling level (ports, filesystem races, timer precision) and
 there is no file ordering guarantee, so the grep run is questioning a different run than the one
 that failed. Run it bare and read the saved file. **Copy that path out of the tool result rather
-than typing one from memory**: it lives under the per-user `$TMPDIR`, and `/tmp/mxd/` also exists and
-is empty, so a remembered path gives you "the tool lied to me".
+than typing one from memory**: it lives under the per-user `$TMPDIR`, and `/tmp/mxd/` also exists
+and is empty, so a remembered path gives you "the tool lied to me".
 
 **The exit code and the pass count are two different claims, and only the exit code covers what
 happens BETWEEN tests.** `2893 pass / 0 fail, exit 1` is not a contradiction to wave through — it is
@@ -3469,8 +3469,8 @@ guard at all**, because under happy-dom Enter never reached the handler.
 Most of what happy-dom lacks costs you thirty minutes and tells you so: no layout means no geometry,
 you cannot type into a React controlled input, and a key handler needs a `.focus()` first or React
 throws before any listener runs. (Which is why a composer is driven in a test by seeding the draft
-through the component's own `localStorage` key, then `.focus()` plus keydown.) **Two are different in
-kind, because they are silent and the bill lands on somebody else:**
+through the component's own `localStorage` key, then `.focus()` plus keydown.) **Two are different
+in kind, because they are silent and the bill lands on somebody else:**
 
 - **It silently drops MutationObserver callbacks under GC pressure** — the listener holds its
   callback in a `WeakRef` with no strong reference anywhere, so after any GC pass mutations are
@@ -4034,10 +4034,10 @@ project's while the reverse is reachable and pinned.
 **The UI bug this produced was one operator: `(draft.model as string | undefined) ?? ""` at READ
 time.** Past that line `undefined` (inherit) and `""` (an explicit empty override) are one value, so
 the state could not be rendered — and, worse, could not be EXITED: typing then deleting left `""` in
-the draft and no gesture anywhere set it back to `undefined`, making the panel a one-way door into an
-empty override. **Derive the state from the raw value FIRST, then coalesce for the control**; the
-reverse order is what erases it. This is *Two situations, one observation* in the UI layer, and it is
-the instance showing the collision is not only a diagnosis problem: **once two states share one
+the draft and no gesture anywhere set it back to `undefined`, making the panel a one-way door into
+an empty override. **Derive the state from the raw value FIRST, then coalesce for the control**; the
+reverse order is what erases it. This is *Two situations, one observation* in the UI layer, and it
+is the instance showing the collision is not only a diagnosis problem: **once two states share one
 value, a control built on that value cannot REACH one of them.**
 
 **CORRECTION to the first account of this, which said the panel "already had the right convention one
@@ -4052,8 +4052,8 @@ state needs its own control. **A comment naming three states is not evidence of 
 evening — grep for the mechanism, not for the sentence claiming it.
 
 **DECIDED — `SettingNumberField` KEEPS the implicit "empty box = inherit" convention.** It is a third
-convention in one panel, which is the one real argument for converting it. Against, decisively: it is
-**not broken the way the other two were** — `e.target.value ? Number(...) : undefined` already
+convention in one panel, which is the one real argument for converting it. Against, decisively: it
+is **not broken the way the other two were** — `e.target.value ? Number(...) : undefined` already
 round-trips, clearing the box returns to inherit, and the inherited value renders as the placeholder.
 **A number has no `""` state, so "empty" there can only mean absent**; the ambiguity the user objected
 to requires a competing legal empty value, which `model` and `defaultAuth` had and a number does not.
@@ -4066,8 +4066,8 @@ on the **project** tab — because the repo layer is `<projectPath>/.mxd/config.
 group every later agent run uses. The local layer under `~/.mxd/` never enters a repo. **That is why
 `GLOBAL_ONLY_FIELDS` is the wrong home for the rule: the field is not global-only, it is
 not-from-the-repo** — and it is why the three tabs are not variations of one form.
-`rejectCredentialFields` is layer-aware for the same reason (repo refuses `defaultAuth`, local allows
-it, `authGroups` refused on both).
+`rejectCredentialFields` is layer-aware for the same reason (repo refuses `defaultAuth`, local
+allows it, `authGroups` refused on both).
 
 **Counting doors is not enough — ask whether every door is a WRITE.** For *how can `defaultAuth` reach
 the repo layer*, there are three: `PATCH …/config/repo` (guarded), `mxd config set --project` (never
@@ -4094,14 +4094,14 @@ a vulnerability: **there is no sandbox, so a hostile repo already owns you once 
 
 **A repo write now NORMALIZES a git-tracked file.** The loader strips and the saver writes what it
 was handed, so the next `PATCH …/config/repo` or `mxd config set --project` silently removes a stale
-`model` from `.mxd/config.json`. Intended for a KNOWN field — the key was already doing nothing — but
-it is a diff nobody asked for, in somebody's tracked file.
+`model` from `.mxd/config.json`. Intended for a KNOWN field — the key was already doing nothing —
+but it is a diff nobody asked for, in somebody's tracked file.
 
 **A key NO layer declares is dropped the same way, and carrying it was considered and REJECTED**
 (user, 2026-07-29). The hazard is real and was traced: `.mxd/config.json` is git-tracked and the saver
 writes back what the loader handed it, so an older matrix editing one field deletes a field a NEWER
-matrix wrote, as an ordinary commit. **The user's answer is that this is a missing-versioning problem,
-not a loader problem** — "现在我们并没有 proper 的 versioning…以后有 versioning 之后,自然而然的
+matrix wrote, as an ordinary commit. **The user's answer is that this is a missing-versioning
+problem, not a loader problem** — "现在我们并没有 proper 的 versioning…以后有 versioning 之后,自然而然的
 如果你读到新版本 应该说让你去更新" — reading a newer config should say *upgrade your matrix* rather
 than absorb it silently. Filed as `01KYR23QK9E4CJDD7XKV8Q1CE5`, deliberately not built here.
 
@@ -4111,16 +4111,16 @@ the fix derived from it correctly priced.** The trace above was right. The remed
 passing unknown keys through either makes that return type a lie for everything downstream or needs
 them held aside on read and re-merged at save, i.e. a preservation channel through read→edit→write in
 three functions, for a case that has never occurred. **The correctness of the diagnosis lends nothing
-to the price of the cure, and a cost stated as one branch by the person who wants the cure is the one
-to re-derive.**
+to the price of the cure, and a cost stated as one branch by the person who wants the cure is the
+one to re-derive.**
 
 **Look a classification table up through a `Map`, never property access on the object literal.**
 `TABLE["__proto__"]` answers with `Object.prototype`, which is TRUTHY, so every prototype-chain name
 (`__proto__`, `constructor`, `toString`) resolves to a bogus entry and is classified by whichever
 branch its undefined flags happen to fall into. It is not only a wrong sentence: `JSON.parse` yields
 `__proto__` as an OWN key, so a key that passes the check is then ASSIGNED to the result object, where
-`__proto__` is a setter rather than a property. **Found by a test asserting the refusal's WORDING** —
-every prototype name was already being refused, for a reason that was not the true one, which is
+`__proto__` is a setter rather than a property. **Found by a test asserting the refusal's WORDING**
+— every prototype name was already being refused, for a reason that was not the true one, which is
 exactly the shape *is the rule being ENFORCED the same rule that is DOCUMENTED* warns about.
 
 **Three negative results, so nobody re-opens them.** Stripping `authGroups` from the LOCAL layer is
@@ -4249,8 +4249,8 @@ among the 11 ids the endpoint lists and the messages API accepts it anyway (200)
 really does break a config that works today. That is why a miss **suggests** the single prefix
 candidate and resolves nothing — suggest, never resolve, because an id the user writes into config is
 chosen and auditable while one we resolved for them is guessed and invisible. All four of Anthropic's
-dated models have exactly one candidate, so the suggestion covers every alias in play. **Do not "fix"
-aliases by reading `response.model` off a probe call**: it expands them, and this file already
+dated models have exactly one candidate, so the suggestion covers every alias in play. **Do not
+"fix" aliases by reading `response.model` off a probe call**: it expands them, and this file already
 records that field as measured NOT to be ground truth.
 
 ### An empty 200 is a REFUSAL wearing the shape of an answer
@@ -4280,8 +4280,8 @@ and `0.0.0`, which also returns all 7, is the worse of the two lies, because `99
 everything follows from `>= minimal_client_version`, the visible mechanism, while `0.0.0` returning
 everything works for a reason we cannot see. **Prefer the sentinel whose behaviour follows from the
 mechanism you can read.** Filtering is pure loss here regardless — we never SELECT from this list, the
-user already picked a model — so a narrower catalogue can only fail a lookup for a model we are about
-to send traffic to.
+user already picked a model — so a narrower catalogue can only fail a lookup for a model we are
+about to send traffic to.
 
 **Sent unconditionally with no endpoint branch, and that is measured rather than assumed:**
 `api.openai.com/v1/models` answers identically with and without it (the same 401 `invalid_api_key`,
@@ -4301,14 +4301,14 @@ independent mismatches, any one of which was enough.
 > **The transferable part is the shape rather than the fields: a 401 masks every later disagreement,
 > and the ones behind it are only separable once it is gone.** Nothing was wrong with the earlier
 > measurement — the 401 was real and the conclusion drawn from it was the honest one available. It
-> was still half wrong, because *"authentication failed"* and *"we cannot read this dialect"* are one
-> observation until the first is fixed. **So a conclusion of the form "X is blocked on Y" is a
+> was still half wrong, because *"authentication failed"* and *"we cannot read this dialect"* are
+one > observation until the first is fixed. **So a conclusion of the form "X is blocked on Y" is a
 > PREDICTION about what happens after Y, and it should be labelled as one rather than as a finding.**
 
 That third dialect is read through the SAME path, with no `isCodexEndpoint` branch: `ID_KEYS = [id,
 slug]` alongside `WINDOW_KEYS = [max_input_tokens, context_length, context_window]`, and the envelope
-reader takes `data ?? models`. That is the existing rule — *the key follows the protocol dialect, not
-the configured provider* — extended rather than forked.
+reader takes `data ?? models`. That is the existing rule — *the key follows the protocol dialect,
+not the configured provider* — extended rather than forked.
 
 **Two test doubles matched the models route with `urlStr.endsWith("/models")`, which a required query
 string silently breaks, and the symptom does not name the cause.** In `mock-openai-responses-api.ts`
@@ -4322,8 +4322,8 @@ all 367 models and has zero bare-name collisions — and is still wrong as a fal
 **3 of the 15 models we measured, with every kimi model missing**, and it reports the window *as
 accessed through OpenRouter*, a middleman's routing parameter standing in for upstream capability. A
 vendored registry (LiteLLM's `model_prices_and_context_window.json`, models.dev) is the same
-hardcoding at larger scale, expiring just as silently. **`api.openai.com/v1/models` does not return a
-context length at all.** The Anthropic SDK client reaches BOTH endpoints, because kimi is an
+hardcoding at larger scale, expiring just as silently. **`api.openai.com/v1/models` does not return
+a context length at all.** The Anthropic SDK client reaches BOTH endpoints, because kimi is an
 anthropic-provider group with a `baseUrl`, so `client.models.list()` needs no hand-built copy of the
 auth headers — and deliberately did not become a fourth site of the hand-matched client construction
 warned about above.
@@ -4379,14 +4379,14 @@ have shipped an empty result read as an answer.
 | `.mxd/hooks/setup_worktree.sh` | points `core.hooksPath` at `.hooks/worktree` |
 | `.hooks/worktree/prepare-commit-msg` | reads that config, appends the trailer |
 
-**`.hooks/worktree` holds `prepare-commit-msg` and nothing else, and aiming it at `.hooks` instead is
-the tempting near-miss**: that directory holds `pre-commit` (typecheck plus a test subset), which
+**`.hooks/worktree` holds `prepare-commit-msg` and nothing else, and aiming it at `.hooks` instead
+is the tempting near-miss**: that directory holds `pre-commit` (typecheck plus a test subset), which
 worktrees skip deliberately because agents commit constantly. Recording provenance and gating a
 commit are separate decisions; whether the gate comes back is `01KNJ7PT19V1HE1ZRT5KW8X043`'s
 question, not this one's. **CORRECTION to *What is actually gated*, whose sub-task-worktree row now
 reads wrong:** `core.hooksPath` in a worktree is `<wt>/.hooks/worktree`, not `/dev/null` — and the
-gating answer is still **no**, because that directory contains no gate. Someone who checks the config
-and stops there concludes the opposite.
+gating answer is still **no**, because that directory contains no gate. Someone who checks the
+config and stops there concludes the opposite.
 
 **Two decisions that look like details.** The id comes from git config, **never** from parsing the
 worktree path: the path shape has changed before, and config is where a worktree's identity durably
@@ -4403,8 +4403,8 @@ the hooks path, so its commits carry no trailer and that is not a defect.
 
 **Three traps in this hook now, and all three are that one fact: whenever the trailer is placed
 somewhere that is not the last paragraph *as `%(trailers:…)` sees it*, the id sits in `%B` looking
-perfect and the parser reports nothing.** The next one will look unrelated too — this is the sentence
-that says where to look.
+perfect and the parser reports nothing.** The next one will look unrelated too — this is the
+sentence that says where to look.
 
 1. **`MERGE_MSG` arrives with NO trailing newline; `COMMIT_EDITMSG` does.** Hand the former to
    `--in-place` and the trailer is joined to the subject by a single newline, after which git's own
@@ -4417,8 +4417,8 @@ that says where to look.
 3. **A line beginning `---` is the format-patch divider, so interpret-trailers stops the message
    there and inserts the trailer ABOVE it** — where it is not the last paragraph and therefore not a
    trailer. The asymmetry is one-sided and is the whole mechanism: **only the WRITER honours `---`;
-   the reader just takes the last paragraph.** Fix is one flag, `--no-divider`. Found the way it will
-   always be found: a real task's first commit came out with no id, from a body containing
+   the reader just takes the last paragraph.** Fix is one flag, `--no-divider`. Found the way it
+   will always be found: a real task's first commit came out with no id, from a body containing
    `--- the 333 red tests were the deletion working ---`.
 
 **MEASURED, and the result is a NEGATIVE one worth more than the fix — `---` is the whole class, not
@@ -4448,15 +4448,15 @@ action.
 audit counted correctly and printed its bucket as `(pre-migration)` — a *cause* the scan never
 tested, and already false when written, since that bucket also holds every clean `--no-ff` merge root
 makes on main, where no hook runs. Nothing caught it until root's own merge moved the number seconds
-after the file landed. **A counting instrument can be right in its number and lying in its label, and
-the label is the part nobody audits** — the number gets checked because somebody wanted it, the
+after the file landed. **A counting instrument can be right in its number and lying in its label,
+and the label is the part nobody audits** — the number gets checked because somebody wanted it, the
 caption is read as decoration. Let a bucket claim only its own predicate ("no `Task-Id:` line in the
 message") and describe what happens to be in it separately.
 
 ### The hook checks its own work, and WHERE that check can live is the whole finding
 
-**A `pre-commit` audit of trailer damage is structurally blind, and the reason is worth more than the
-check: the commits that CAN be damaged are exactly the ones a `pre-commit` hook never sees.**
+**A `pre-commit` audit of trailer damage is structurally blind, and the reason is worth more than
+the check: the commits that CAN be damaged are exactly the ones a `pre-commit` hook never sees.**
 `.hooks/worktree/` holds `prepare-commit-msg` and nothing else, so pre-commit never runs in a
 worktree; a clean `--no-ff` merge runs no hook at all; so a gate there sees only root's own direct
 commits on main — which carry no trailer whatsoever and therefore cannot exhibit the defect. **Three
@@ -4479,8 +4479,8 @@ call: without it the check inherits the divider rule the writer just stopped hon
 disagrees with the reader in both directions at once.
 
 **The guard has a test for each direction, and that pair is the point.** Deleting the check reddens
-"warns when the trailer would not read back"; making it warn unconditionally reddens "stays silent on
-the same message". Over-strict is the direction nobody tests, and here it is the expensive one: a
+"warns when the trailer would not read back"; making it warn unconditionally reddens "stays silent
+on the same message". Over-strict is the direction nobody tests, and here it is the expensive one: a
 check that cries on every commit is read as wallpaper within a day. **The state is now unreachable
 through a correct writer, so the test breaks the WRITER on purpose** — `installTrailerHook` takes a
 mutation that strips one flag from the shipped script, leaving the code under test verbatim. A check
@@ -4509,8 +4509,8 @@ were masking (`01KYJ27S0N3VBXQTFVNQ3FB879`).
 
 **Deleting a named constant does not find its literal twins, and there were three.** The grep for
 `DEFAULT_MODEL` found all four of its call sites and could not see `model ?? "gpt-4o"` in the OpenAI
-provider constructor, `config.model || "gpt-4o"` in `createLLM`'s openai branch three lines below the
-anthropic branch the same commit had just fixed, or `request.model ?? "claude-sonnet-4-6"` in
+provider constructor, `config.model || "gpt-4o"` in `createLLM`'s openai branch three lines below
+the anthropic branch the same commit had just fixed, or `request.model ?? "claude-sonnet-4-6"` in
 `runProviderLoop`. **Chase the SHAPE — a fallback sitting in the model slot — not the name:** `grep
 'claude-sonnet-4-6\|"gpt-4o"'` found all three in one pass, after a `DEFAULT_MODEL` grep had come
 back clean and been believed.
@@ -4551,8 +4551,8 @@ API. The Anthropic SDK's constructor does `if (apiKey === undefined) apiKey = re
 same for `ANTHROPIC_AUTH_TOKEN`, so with zero env reads left in `src/`,
 `new AnthropicCompatibleProvider(model, {})` still yields a client whose `apiKey` is whatever the
 shell holds. What our deletion actually removed was the BRANCH
-CHOICE: a truthy `apiKey` sets `useOAuth = false`, so before it an ambient key silently outranked the
-OAuth token the user had configured.
+CHOICE: a truthy `apiKey` sets `useOAuth = false`, so before it an ambient key silently outranked
+the OAuth token the user had configured.
 
 > **A dependency's default parameter is a DOOR, and it is the one door nothing in this repo can
 > grep.** `grep process.env src/` came back clean while env decided the credential on every request.
@@ -4576,8 +4576,8 @@ RESULT: there is no disable-env option to go looking for**; the open request for
 `check_model` handler in `runtime.ts`. Beta headers, timeout and the auth-group `baseUrl` were
 already hand-matched across them; this made that agreement load-bearing for a correctness property
 rather than for cosmetics. **`check_model` is the site where getting it wrong hurt most, and "it
-shares the bug" understates it**: it backs the Settings *check model* button, which is exactly what a
-user presses while diagnosing this failure — so it did not merely fail too, it reproduced the
+shares the bug" understates it**: it backs the Settings *check model* button, which is exactly what
+a user presses while diagnosing this failure — so it did not merely fail too, it reproduced the
 both-headers rejection and reported that the OAuth token the user had just configured was bad. **When
 ranking doors, ask which one somebody arrives at while already confused.**
 
@@ -4621,8 +4621,8 @@ catch the `||`.
 
 **Behaviour change, intended: with nothing configured the client holds nothing**, so the SDK throws
 *"Could not resolve authentication method…"* before building a request, instead of quietly running on
-the shell's key. Same trade as deleting `DEFAULT_MODEL`: an unconfigured value became visible instead
-of substituted.
+the shell's key. Same trade as deleting `DEFAULT_MODEL`: an unconfigured value became visible
+instead of substituted.
 
 ### The host, and who gets billed
 
@@ -4661,8 +4661,8 @@ achieved, request malformed, 401 with a misleading message. Not a workaround.
 The user's decision was to delete the copy: "把 config 做成,api key,没有别的选项。access token 和
 ref token 选项去掉。换成 auth.json path". An OpenAI auth group now holds `apiKey` **or**
 `authJsonPath` — a path to the `auth.json` the codex CLI maintains, which we only ever read.
-`accessToken`, `refreshToken` and `accountId` are gone from config; the account id is read out of the
-file.
+`accessToken`, `refreshToken` and `accountId` are gone from config; the account id is read out of
+the file.
 
 **The reason is ownership, and it is what makes the design non-obvious.** OpenAI ROTATES the refresh
 token on every refresh, invalidating the previous one. So two copies of the pair are not one live
@@ -4679,13 +4679,13 @@ apart.** The `apiKey` slot accepts `() => Promise<string>`, invoked before EVERY
 `makeRequest` awaits `prepareOptions` → `_callApiKey` → `authHeaders`, and `retryRequest` re-enters
 `makeRequest`. We had hand-built exactly that shape as `OpenAICredentialSource`, then resolved it
 ourselves and handed the SDK a static string, **downgrading a per-REQUEST capability to per-TURN**.
-With `maxRetries: 2` one call sends up to three HTTP requests on one token while codex rotates on its
-own schedule, so the retry re-sent a token that had just been rotated away and collected an auth
+With `maxRetries: 2` one call sends up to three HTTP requests on one token while codex rotates on
+its own schedule, so the retry re-sent a token that had just been rotated away and collected an auth
 error that reads like a bad credential. Passing a function is also the only way to stop
 `OPENAI_API_KEY` filling that slot, since its type has no `null`. It had been deliberately deferred
 once (`01KYSE0N667GMYDC81057J3NX8`) on the correct ground that it is a behavioural change needing a
-test that drives a real retry and asserts the SECOND request carries a NEW token; that is exactly the
-test that now pins it.
+test that drives a real retry and asserts the SECOND request carries a NEW token; that is exactly
+the test that now pins it.
 
 **Moving a capability from per-N to per-M needs a fixture holding TWO M's inside ONE N, and every
 weaker assertion is green against both implementations.** "The function was passed" and "the function
@@ -4705,8 +4705,8 @@ it is also where an unreadable credential fails with OUR message instead of insi
 Three measured facts around it. `ChatGPT-Account-Id` is **not required** for codex `/models` (200
 with and without, byte-identical; 401 with no `Authorization` as the positive control) and is still
 sent, because codex sends it and the **responses** path was never probed without it — and the first
-2×2 said the opposite until an ORDER CONTROL killed it: `/models/catalog` answered 403 (an HTML block
-page) without the header and 404 with it, which reads exactly like a header requirement, and
+2×2 said the opposite until an ORDER CONTROL killed it: `/models/catalog` answered 403 (an HTML
+block page) without the header and 404 with it, which reads exactly like a header requirement, and
 reversing the order moved the 403 onto the with-header call before both settled at 404. **A
 first-hit edge block and a real header requirement are indistinguishable in the payload; only the
 permutation separates them.** A path is **never masked** — `authJsonPath` is not a credential, the
@@ -4724,24 +4724,24 @@ is corrected by traffic.**
 
 > **The transferable half is about the reading, not the file. A reading of a self-rotating value has
 > a shelf life by construction, so quoting one as ground truth is a category error however carefully
-> it was measured.** That 2026-01-19 expiry was true when taken and was passed forward twice — into a
-> task description and then a briefing — as a current fact, inside an argument about the file
+> it was measured.** That 2026-01-19 expiry was true when taken and was passed forward twice — into
+a > task description and then a briefing — as a current fact, inside an argument about the file
 > rotating itself. **No reading of externally-owned state may survive as a constant, a cached value,
 > or a comment stating a date, including a fresh one. Ask the file.**
 
 **MEASURED and worth knowing before you trust any of this in production: none of these variables can
 reach an INSTALLED daemon.** `daemonPlist()` forwards `PATH` and `HOME` and nothing else, so every
 env-decides-the-credential-or-host effect above only ever applied to a daemon started from an
-interactive shell. That is not a reason to relax — **it is precisely the bootstrap path, which is us,
-every day** — but state it that way round rather than as "any user with the variable exported".
+interactive shell. That is not a reason to relax — **it is precisely the bootstrap path, which is
+us, every day** — but state it that way round rather than as "any user with the variable exported".
 One env reader remains, out of product scope and worth knowing before you trust it:
 `scripts/probe-hidden-tool.ts` builds its own client with no `baseURL`, so a shell variable can
 silently redirect the probe we use to measure what the API does.
 
 **The compiler found 8 files; a whole-tree grep found 5 more, and the loudest was a settings UI with
 three live inputs for fields that no longer existed.** `web/` cannot import `src/config.ts` — the
-plugin boundary is asserted by a test — so `web/components/SettingsPanel.tsx` declares its OWN copy of
-the auth-group shape, and deleting three fields from the real type produced **zero** errors there
+plugin boundary is asserted by a test — so `web/components/SettingsPanel.tsx` declares its OWN copy
+of the auth-group shape, and deleting three fields from the real type produced **zero** errors there
 while two password inputs went on collecting them, plus 12 orphan i18n keys across two files and two
 locales. **The 8:5 ratio is the entry: the typed half and the by-name half are the same order of
 magnitude here, and only one of them reddens.** Filed as `01KYRD9GS9HCW8145H5C5ES6MZ`.
@@ -4897,8 +4897,8 @@ scratch. It also catches leaks nobody wrote a case for, because the whole header
 
 **Both endpoints must be asserted in ONE `toEqual`.** Two properties are needed — that the target
 really RECEIVED something (or a fixture that sends nothing reads clean) and that the decoy testifies
-— and written as sequential `expect`s **the arrival assertion fails first and aborts the test, so the
-testimony never prints**: measured, a mutation sending every request to the decoy reported only
+— and written as sequential `expect`s **the arrival assertion fails first and aborts the test, so
+the testimony never prints**: measured, a mutation sending every request to the decoy reported only
 `Expected: 1 Received: 0`. One assertion over `{target, decoy}` yields a diff carrying the whole
 picture. **Two requirements that each look satisfied can cancel through assertion ORDER.**
 
@@ -4907,8 +4907,8 @@ answer 400**, a status neither SDK retries, because the observable is ARRIVAL ra
 successful turn. **`check_model` is the cheapest real door in the repo** — it calls `messages.create`
 rather than `.stream` and never asks `/v1/models` — so about ten lines of listener buys the whole
 chain from a `config.json` in a temp dir through `loadGlobalConfig` → `resolveAuthGroup` →
-`createProviderFromConfig` → SDK → wire. The agent LOOP is the one door this cannot reach; that needs
-a real SSE mock and stays filed as `01KMNYSM4JBJ3FPZCQPFZF6T3Q`.
+`createProviderFromConfig` → SDK → wire. The agent LOOP is the one door this cannot reach; that
+needs a real SSE mock and stays filed as `01KMNYSM4JBJ3FPZCQPFZF6T3Q`.
 
 **A default that is a REAL host makes one case unreachable receiver-side.** With no `baseUrl`
 configured we target `api.anthropic.com`, so that case would make a genuine outbound call — and a
@@ -4920,8 +4920,8 @@ POSITIVE assertion that the blocked request really targeted that host.
 This justified deleting three fetch-interception describes (`llm.test.ts`, `runtime.test.ts`,
 `openai-responses-compatible-provider.test.ts`) that the receiver version subsumes. **The provider
 constructor's own sentinels were KEPT** — no door reaches `AnthropicCompatibleProvider`'s client
-without running a loop, so `authHeaders()` there is the only coverage of the busiest path rather than
-a duplicate. **Check which door each test actually reaches before calling it redundant.**
+without running a loop, so `authHeaders()` there is the only coverage of the busiest path rather
+than a duplicate. **Check which door each test actually reaches before calling it redundant.**
 
 ### The fixture underneath all of it is only as wide as its callback's synchronous prefix
 
